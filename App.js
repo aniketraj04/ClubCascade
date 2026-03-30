@@ -7,9 +7,10 @@ import * as ImagePicker from 'expo-image-picker'; // NEW: Mobile Gallery Access!
 
 const Stack = createNativeStackNavigator();
 
-// 1. The Student Dashboard (Supports Gorgeous Image Posters!)
+// 1. The Student Dashboard (Supports Gorgeous Image Posters and Registration!)
 function StudentDashboard({ route, navigation }) {
-  const { userName } = route.params;
+  // NEW: We now extract both the userName AND the userId so we know exactly who is registering!
+  const { userName, userId } = route.params;
   const [events, setEvents] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -34,9 +35,36 @@ function StudentDashboard({ route, navigation }) {
     }
   };
 
+  // NEW: The function that talks to our latest Backend Registration API!
+  const handleRegister = async (eventId) => {
+    try {
+      const response = await fetch(`${API_URL}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, event_id: eventId })
+      });
+      
+      const rawText = await response.text();
+      console.log("=== THE BACKEND CRASHED. HERE IS THE EXACT ERROR: ===");
+      console.log(rawText);
+      console.log("=====================================================");
+      
+      const data = JSON.parse(rawText);
+
+      // If successful, or if they are already registered, show them the server's message!
+      if (data.success) {
+        Alert.alert('Registered! 🎉', data.message);
+      } else {
+        Alert.alert('Heads up', data.message);
+      }
+    } catch (error) {
+      console.error("Fetch/JSON parse failed. (Check your Expo terminal for the rawText trace!)");
+      Alert.alert('Network Error', 'Could not register for the event.');
+    }
+  };
+
   const renderEvent = ({ item }) => (
     <View style={styles.eventCard}>
-      {/* If the event has an image uploaded, draw it! */}
       {item.image_url ? (
         <Image source={{ uri: item.image_url }} style={styles.eventImage} resizeMode="cover" />
       ) : null}
@@ -46,7 +74,8 @@ function StudentDashboard({ route, navigation }) {
       <Text style={styles.eventVenue}>📍 {item.venue}</Text>
       {item.description ? <Text style={styles.eventDesc}>{item.description}</Text> : null}
 
-      <TouchableOpacity style={styles.registerButton} onPress={() => Alert.alert('Coming Soon!', 'Registration feature is next!')}>
+      {/* We tied the button straight to our handleRegister function, passing the exact event_id! */}
+      <TouchableOpacity style={styles.registerButton} onPress={() => handleRegister(item.event_id)}>
         <Text style={styles.buttonText}>Register for Event</Text>
       </TouchableOpacity>
     </View>
@@ -77,6 +106,7 @@ function StudentDashboard({ route, navigation }) {
     </View>
   );
 }
+
 
 // 2. Organizer Dashboard (Now with Image Pickers & File Uploads!)
 function OrganizerDashboard({ route, navigation }) {
@@ -270,7 +300,7 @@ function LoginScreen({ navigation }) {
       if (data.success) {
         if (isLoginMode) {
           const userRole = data.user.role;
-          if (userRole === 'student') navigation.replace('Student', { userName: data.user.name });
+          if (userRole === 'student') navigation.replace('Student', { userName: data.user.name, userId: data.user.id });
           else if (userRole === 'organizer') navigation.replace('Organizer', { userName: data.user.name });
         } else {
           Alert.alert('Success!', data.message);

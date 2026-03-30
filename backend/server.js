@@ -99,6 +99,40 @@ app.post('/api/events', upload.single('poster'), (req, res) => {
   });
 });
 
+// ===================================================================
+// NEW: REGISTER FOR EVENT API (For Students)
+// ===================================================================
+app.post('/api/register', (req, res) => {
+  const { user_id, event_id } = req.body;
+  if (!user_id || !event_id) return res.json({ success: false, message: 'Missing user or event ID' });
+
+  // 1. Check if the event is completely full!
+  db.query('SELECT limit_participants, (SELECT COUNT(*) FROM registrations WHERE event_id = ?) as current_count FROM events WHERE event_id = ?', [event_id, event_id], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error deciding limits.' });
+    if (results.length === 0) return res.json({ success: false, message: 'Event not found.' });
+
+    const event = results[0];
+    if (event.limit_participants > 0 && event.current_count >= event.limit_participants) {
+      return res.json({ success: false, message: 'Sorry, this event is completely full!' });
+    }
+
+    // 2. Check if the student is ALREADY registered
+    db.query('SELECT * FROM registrations WHERE user_id = ? AND event_id = ?', [user_id, event_id], (err, regResults) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error checking registration.' });
+      if (regResults.length > 0) {
+        return res.json({ success: false, message: 'You are already registered for this event!' });
+      }
+
+      // 3. Register the student!
+      db.query('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)', [user_id, event_id], (err) => {
+        if (err) return res.status(500).json({ success: false, message: 'Database error saving registration.' });
+        res.json({ success: true, message: 'Successfully registered! We will see you there.' });
+      });
+    });
+  });
+});
+// ===================================================================
+
 app.listen(3000, () => {
   console.log('🚀 Server running on port 3000');
 });
