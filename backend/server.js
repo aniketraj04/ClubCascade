@@ -133,6 +133,95 @@ app.post('/api/register', (req, res) => {
 });
 // ===================================================================
 
+// ===================================================================
+// NEW: FETCH STUDENT'S TICKETS API (For QR Codes)
+// ===================================================================
+app.get('/api/tickets/:user_id', (req, res) => {
+  const userId = req.params.user_id;
+
+  const sqlQuery = `
+    SELECT events.title, events.date, events.venue, events.image_url, registrations.registration_id, registrations.attended
+    FROM registrations
+    JOIN events ON registrations.event_id = events.event_id
+    WHERE registrations.user_id = ?
+    ORDER BY events.date ASC
+  `;
+
+  db.query(sqlQuery, [userId], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    res.json({ success: true, tickets: results });
+  });
+});
+// ===================================================================
+
+// ===================================================================
+// NEW: SCAN QR TICKET API (For Organizers)
+// ===================================================================
+app.post('/api/checkin', (req, res) => {
+  const { registration_id } = req.body;
+
+  // We simply flip the `attended` switch from FALSE to TRUE!
+  const sqlQuery = 'UPDATE registrations SET attended = TRUE WHERE registration_id = ?';
+
+  db.query(sqlQuery, [registration_id], (err, result) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+
+    // Safety check just in case they scanned an invalid or non-existent QR ticket
+    if (result.affectedRows === 0) {
+      return res.json({ success: false, message: 'Invalid Ticket! Not found in system.' });
+    }
+
+    res.json({ success: true, message: `Ticket Scanned! Student #${registration_id} marked as Attended! ✅` });
+  });
+});
+// ===================================================================
+
+
+// ===================================================================
+// NEW: LIVE EVENT STATS API (For Organizers)
+// ===================================================================
+app.get('/api/stats', (req, res) => {
+  // We use "LEFT JOIN" and "GROUP BY" to count exactly how many students registered, and calculate how many had their QR code scanned!
+  const sqlQuery = `
+    SELECT e.event_id, e.title, e.limit_participants,
+           COUNT(r.registration_id) as total_registered,
+           SUM(CASE WHEN r.attended = TRUE THEN 1 ELSE 0 END) as total_attended
+    FROM events e
+    LEFT JOIN registrations r ON e.event_id = r.event_id
+    GROUP BY e.event_id
+    ORDER BY e.date ASC
+  `;
+
+  db.query(sqlQuery, (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    res.json({ success: true, stats: results });
+  });
+});
+// ===================================================================
+
+// ===================================================================
+// NEW: FETCH ACTUAL NAMES AND EMAILS OF ATTENDEES (For Teachers)
+// ===================================================================
+app.get('/api/attendees/:event_id', (req, res) => {
+  const eventId = req.params.event_id;
+
+  // We JOIN the Users table with Registrations to pull their real identity!
+  // We strictly only select students where attended = TRUE
+  const sqlQuery = `
+    SELECT users.name, users.email 
+    FROM registrations
+    JOIN users ON registrations.user_id = users.id
+    WHERE registrations.event_id = ? AND registrations.attended = TRUE
+  `;
+
+  db.query(sqlQuery, [eventId], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    res.json({ success: true, attendees: results });
+  });
+});
+// ===================================================================
+
+
 app.listen(3000, () => {
   console.log('🚀 Server running on port 3000');
 });
