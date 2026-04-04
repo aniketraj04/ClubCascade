@@ -8,6 +8,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import { io } from 'socket.io-client'; // NEW: WebSocket driver!
 
 const Stack = createNativeStackNavigator();
 
@@ -15,19 +16,86 @@ const Stack = createNativeStackNavigator();
 function StudentDashboard({ route, navigation }) {
   const { userName, userId } = route.params;
   const [events, setEvents] = useState([]);
+  const [searchQuery, setSearchQuery] = useState('');
   const [myTickets, setMyTickets] = useState([]); // Holds the registered tickets!
   const [isLoading, setIsLoading] = useState(true);
 
-  // NEW: Determines if they are looking at "Discover" or "My Tickets"
+  // NEW: Real-Time Alerts State
+  const [notifications, setNotifications] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // NEW: Determines if they are looking at "Discover", "My Tickets", or "Alerts"
   const [viewMode, setViewMode] = useState('events');
 
-  const API_URL = 'http://10.118.76.100:3000/api';
+  // NEW: Event Details & Q&A Board State
+  const [isDetailsModalVisible, setIsDetailsModalVisible] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [eventQueries, setEventQueries] = useState([]);
+  const [newQueryMessage, setNewQueryMessage] = useState('');
+
+  // NEW: Filter State 
+  const [selectedCategory, setSelectedCategory] = useState("All Categories");
+  const EVENT_CATEGORIES = ["All Categories", "General", "Tech", "Arts", "Sports", "Party", "Workshop"];
+
+  const API_URL = 'http://10.126.236.100:3000/api';
+  const SOCKET_URL = 'http://10.126.236.100:3000'; // Our new Streaming port!
+
+  // ===================================
+  // NEW: The WebSockets Brain!
+  // ===================================
+  useEffect(() => {
+    // 1. Fetch their history immediately on load
+    fetchNotifications();
+
+    // 2. Secretly connect to the backend WebSockets server
+    const socket = io(SOCKET_URL);
+
+    // 3. Listen for the Live Broadcast drop from Organizers!
+    socket.on('new_event_alert', (data) => {
+      // Vibrate/Pop up an instant native alert!
+      Alert.alert('🚨 LIVE EVENT DROP', data.message);
+
+      // We magically fetch their updated list without refreshing!
+      fetchNotifications();
+    });
+
+    // 4. NEW: Listen for Live Chat Messages on the Q&A Board
+    socket.on('new_event_query', (newQuery) => {
+      // Magically inject new chat messages exactly into the array in real-time
+      setEventQueries((prev) => [...prev, newQuery]);
+    });
+
+    // Cleanup connection when they log out
+    return () => socket.disconnect();
+  }, []);
 
   // Automatically fetch data depending on which tab they clicked
   useEffect(() => {
     if (viewMode === 'events') fetchEvents();
-    else fetchMyTickets();
+    else if (viewMode === 'tickets') fetchMyTickets();
+    else if (viewMode === 'alerts') fetchNotifications();
   }, [viewMode]);
+
+  // NEW: Loads their inbox and calculates unread badges!
+  const fetchNotifications = async () => {
+    try {
+      const response = await fetch(`${API_URL}/notifications/${userId}`);
+      const data = await response.json();
+      if (data.success) {
+        setNotifications(data.notifications);
+        const unread = data.notifications.filter(n => !n.is_read).length;
+        setUnreadCount(unread);
+      }
+    } catch (err) { console.error("Error fetching alerts", err); }
+  };
+
+  // NEW: Mark as read when they tap an alert!
+  const handleMarkAsRead = async (notificationId) => {
+    try {
+      await fetch(`${API_URL}/notifications/read/${notificationId}`, { method: 'POST' });
+      fetchNotifications(); // Refresh to clear the red dot!
+    } catch (err) { }
+  };
 
   const fetchEvents = async () => {
     setIsLoading(true);
@@ -76,9 +144,61 @@ function StudentDashboard({ route, navigation }) {
     }
   };
 
+  // NEW: Cancel Registration Function (With Safety Alert!)
+  const handleCancelRegistration = (registrationId) => {
+    Alert.alert(
+      "Cancel Ticket?",
+      "Are you sure you want to withdraw from this event? Your spot will be permanently lost.",
+      [
+        { text: "Nevermind", style: "cancel" },
+        { 
+          text: "Yes, Cancel It", 
+          style: "destructive",
+          onPress: async () => {
+            try {
+              const response = await fetch(`${API_URL}/cancel-registration/${registrationId}`, { method: 'DELETE' });
+              const data = await response.json();
+              if (data.success) {
+                Alert.alert("Ticket Withdrawn", data.message);
+                fetchMyTickets(); // Automatically refreshes the UI list!
+              } else {
+                Alert.alert("Error", data.message);
+              }
+            } catch (err) { Alert.alert("Error", "Server unreachable."); }
+          }
+        }
+      ]
+    );
+  };
+
+  // NEW: Opens the Full-Screen Native Experience
+  const openEventDetails = async (event) => {
+    setSelectedEvent(event);
+    setIsDetailsModalVisible(true);
+    try {
+      const response = await fetch(`${API_URL}/queries/${event.event_id}`);
+      const data = await response.json();
+      if (data.success) setEventQueries(data.queries);
+    } catch (err) { console.error(err); }
+  };
+
+  // NEW: Instant Post Chat Message
+  const handlePostQuery = async () => {
+    if (!newQueryMessage.trim()) return;
+    try {
+      const response = await fetch(`${API_URL}/queries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: selectedEvent.event_id, user_id: userId, user_name: userName, message: newQueryMessage })
+      });
+      const data = await response.json();
+      if (data.success) setNewQueryMessage(''); // Clear input natively!
+    } catch (err) { console.error(err); }
+  };
+
   // UI for Discovering Events
   const renderEvent = ({ item }) => (
-    <View style={styles.eventCard}>
+    <TouchableOpacity style={styles.eventCard} activeOpacity={0.9} onPress={() => openEventDetails(item)}>
       {item.image_url ? <Image source={{ uri: item.image_url }} style={styles.eventImage} resizeMode="cover" /> : null}
       <Text style={styles.eventTitle}>{item.title}</Text>
       <Text style={styles.eventDate}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</Text>
@@ -88,7 +208,7 @@ function StudentDashboard({ route, navigation }) {
       <TouchableOpacity style={styles.registerButton} onPress={() => handleRegister(item.event_id)}>
         <Text style={styles.buttonText}>Register for Event</Text>
       </TouchableOpacity>
-    </View>
+    </TouchableOpacity>
   );
 
   // UI for Showing their QR Code Ticket!
@@ -98,6 +218,23 @@ function StudentDashboard({ route, navigation }) {
       <Text style={styles.eventTitle}>{item.title}</Text>
       <Text style={styles.eventDate}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</Text>
       <Text style={styles.eventVenue}>📍 {item.venue}</Text>
+
+      {/* NEW: Dynamic Attendance Badges! */}
+      <View style={{ flexDirection: 'row', marginTop: 10 }}>
+        {item.attended === 1 ? (
+          <View style={{ backgroundColor: '#C6F6D5', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#48BB78' }}>
+            <Text style={{ color: '#2F855A', fontWeight: 'bold' }}>✅ Verified Attendance</Text>
+          </View>
+        ) : new Date(item.date) < new Date() ? (
+          <View style={{ backgroundColor: '#FED7D7', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#F56565' }}>
+            <Text style={{ color: '#C53030', fontWeight: 'bold' }}>❌ Missed Event</Text>
+          </View>
+        ) : (
+          <View style={{ backgroundColor: '#EBF8FF', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#4299E1' }}>
+            <Text style={{ color: '#2B6CB0', fontWeight: 'bold' }}>🎟️ Upcoming Event</Text>
+          </View>
+        )}
+      </View>
 
       <View style={styles.qrContainer}>
         <Text style={styles.qrText}>Show this QR code at the door:</Text>
@@ -112,30 +249,85 @@ function StudentDashboard({ route, navigation }) {
         </View>
         <Text style={styles.ticketIdText}>Ticket #{item.registration_id}</Text>
       </View>
+
+      {/* NEW: The big red Cancel button! */}
+      <TouchableOpacity 
+        style={[styles.registerButton, { backgroundColor: '#E53E3E', marginTop: 15 }]} 
+        onPress={() => handleCancelRegistration(item.registration_id)}
+      >
+        <Text style={styles.buttonText}>❌ Withdraw Ticket</Text>
+      </TouchableOpacity>
     </View>
+  );
+
+  // NEW: UI for Displaying an individual Alert!
+  const renderAlert = ({ item }) => (
+    <TouchableOpacity
+      style={[styles.alertCard, !item.is_read && styles.alertCardUnread]}
+      onPress={() => handleMarkAsRead(item.notification_id)}
+    >
+      <Text style={styles.alertText}>{item.message}</Text>
+      <Text style={styles.alertDate}>
+        {new Date(item.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
+      </Text>
+      {!item.is_read && <View style={styles.unreadDot} />}
+    </TouchableOpacity>
+  );
+
+  // NEW: Master Filter System (Checks Category THEN Text Match)
+  const filteredEvents = events.filter(e => 
+    (selectedCategory === "All Categories" || e.category === selectedCategory) &&
+    e.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   return (
     <View style={styles.dashboardContainer}>
-      <Text style={styles.dashboardTitle}>Student Dashboard</Text>
-      <Text style={styles.dashboardSubtitle}>Hello {userName}!</Text>
-
-      {/* NEW: Top Menu Tab Toggle */}
+      <Text style={styles.dashboardTitle}>Student Dashboard 🎓</Text>
+      
       <View style={styles.tabContainer}>
-        <TouchableOpacity
-          style={[styles.tabButton, viewMode === 'events' && styles.tabActive]}
-          onPress={() => setViewMode('events')}
-        >
+        <TouchableOpacity style={[styles.tabButton, viewMode === 'events' && styles.tabActive]} onPress={() => setViewMode('events')}>
           <Text style={viewMode === 'events' ? styles.tabActiveText : styles.tabInactiveText}>Discover</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          style={[styles.tabButton, viewMode === 'tickets' && styles.tabActive]}
-          onPress={() => setViewMode('tickets')}
-        >
+        <TouchableOpacity style={[styles.tabButton, viewMode === 'tickets' && styles.tabActive]} onPress={() => setViewMode('tickets')}>
           <Text style={viewMode === 'tickets' ? styles.tabActiveText : styles.tabInactiveText}>My Tickets</Text>
         </TouchableOpacity>
+
+        {/* NEW: The Live Notifications Tab! */}
+        <TouchableOpacity style={[styles.tabButton, viewMode === 'alerts' && styles.tabActive]} onPress={() => { setViewMode('alerts'); fetchNotifications(); }}>
+          <Text style={viewMode === 'alerts' ? styles.tabActiveText : styles.tabInactiveText}>
+            Alerts {unreadCount > 0 ? `(${unreadCount})` : ''}
+          </Text>
+        </TouchableOpacity>
       </View>
+
+      {viewMode === 'events' && (
+        <View style={{ width: '100%' }}>
+          <TextInput
+            style={[styles.input, { marginBottom: 15 }]}
+            placeholder="🔍 Search for an event title..."
+            value={searchQuery}
+            onChangeText={setSearchQuery}
+          />
+          
+          {/* NEW: Category Scroller Native Interface */}
+          <View style={{ marginBottom: 15 }}>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ paddingHorizontal: 5 }}>
+              {EVENT_CATEGORIES.map(cat => (
+                <TouchableOpacity 
+                  key={cat} 
+                  onPress={() => setSelectedCategory(cat)}
+                  style={{ 
+                    backgroundColor: selectedCategory === cat ? '#2B6CB0' : '#E2E8F0', 
+                    paddingHorizontal: 16, paddingVertical: 8, borderRadius: 20, marginRight: 10 
+                  }}>
+                  <Text style={{ color: selectedCategory === cat ? '#FFF' : '#4A5568', fontWeight: 'bold' }}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+          </View>
+        </View>
+      )}
 
       {isLoading ? (
         <ActivityIndicator size="large" color="#3182CE" style={{ marginTop: 50 }} />
@@ -143,14 +335,72 @@ function StudentDashboard({ route, navigation }) {
         <Text style={styles.noEventsText}>No upcoming events found.</Text>
       ) : viewMode === 'tickets' && myTickets.length === 0 ? (
         <Text style={styles.noEventsText}>You haven't registered for any events yet!</Text>
+      ) : viewMode === 'alerts' && notifications.length === 0 ? (
+        <Text style={styles.noEventsText}>Your inbox is empty. No alerts yet!</Text>
       ) : (
         <FlatList
-          data={viewMode === 'events' ? events : myTickets}
-          keyExtractor={(item) => (viewMode === 'events' ? item.event_id.toString() : item.registration_id.toString())}
-          renderItem={viewMode === 'events' ? renderEvent : renderTicket}
+          data={viewMode === 'events' ? filteredEvents : (viewMode === 'tickets' ? myTickets : notifications)}
+
+          keyExtractor={(item) => (
+            viewMode === 'events' ? item.event_id.toString() :
+              viewMode === 'tickets' ? item.registration_id.toString() :
+                item.notification_id.toString()
+          )}
+          renderItem={viewMode === 'events' ? renderEvent : (viewMode === 'tickets' ? renderTicket : renderAlert)}
           style={{ width: '100%' }}
           showsVerticalScrollIndicator={false}
         />
+      )}
+
+      {/* ========================================================= */}
+      {/* NEW: THE EVENT DETAILS & LIVE CHAT MODAL */}
+      {/* ========================================================= */}
+      {selectedEvent && (
+        <Modal visible={isDetailsModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setIsDetailsModalVisible(false)}>
+          <SafeAreaView style={{ flex: 1, backgroundColor: '#F7FAFC' }}>
+            <View style={styles.modalHeader}>
+              <TouchableOpacity onPress={() => setIsDetailsModalVisible(false)}><Text style={styles.closeBtn}>✕ Close</Text></TouchableOpacity>
+              <Text style={styles.modalTitle} numberOfLines={1}>{selectedEvent.title}</Text>
+              <View style={{ width: 40 }} />
+            </View>
+
+            <ScrollView contentContainerStyle={{ padding: 20 }}>
+              {selectedEvent.image_url && <Image source={{ uri: selectedEvent.image_url }} style={styles.eventImage} resizeMode="cover" />}
+              <Text style={styles.eventTitle}>{selectedEvent.title}</Text>
+              <Text style={styles.eventDate}>📅 {new Date(selectedEvent.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</Text>
+              <Text style={styles.eventVenue}>📍 {selectedEvent.venue}</Text>
+              {selectedEvent.description && <Text style={styles.eventDesc}>{selectedEvent.description}</Text>}
+
+              <TouchableOpacity style={[styles.registerButton, { marginTop: 20, marginBottom: 30 }]} onPress={() => handleRegister(selectedEvent.event_id)}>
+                <Text style={styles.buttonText}>Register Instantly</Text>
+              </TouchableOpacity>
+
+              {/* LIVE Q&A BOARD */}
+              <View style={{ borderTopWidth: 1, borderColor: '#E2E8F0', paddingTop: 20 }}>
+                <Text style={styles.dashboardSubtitle}>Live Q&A Board</Text>
+                
+                {eventQueries.map((query, index) => (
+                  <View key={index} style={{ backgroundColor: '#FFF', padding: 15, borderRadius: 10, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 2 }}>
+                    <Text style={{ fontWeight: 'bold', color: '#2B6CB0', marginBottom: 5 }}>{query.user_name}</Text>
+                    <Text style={{ color: '#4A5568' }}>{query.message}</Text>
+                  </View>
+                ))}
+
+                <View style={{ flexDirection: 'row', marginTop: 15, alignItems: 'center' }}>
+                  <TextInput 
+                    style={[styles.input, { flex: 1, marginBottom: 0, marginRight: 10 }]} 
+                    placeholder="Ask a question..." 
+                    value={newQueryMessage}
+                    onChangeText={setNewQueryMessage}
+                  />
+                  <TouchableOpacity style={[styles.button, { width: 80, marginTop: 0 }]} onPress={handlePostQuery}>
+                    <Text style={styles.buttonText}>Send</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            </ScrollView>
+          </SafeAreaView>
+        </Modal>
       )}
 
       <TouchableOpacity style={styles.logoutButton} onPress={() => navigation.replace('Login')}>
@@ -166,7 +416,7 @@ function OrganizerDashboard({ route, navigation }) {
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [venue, setVenue] = useState('');
-  const [limit, setLimit] = useState('');
+  const [limitParticipants, setLimitParticipants] = useState('');
   const [isPosting, setIsPosting] = useState(false);
   const [imageUri, setImageUri] = useState(null);
   const [date, setDate] = useState(new Date());
@@ -175,6 +425,10 @@ function OrganizerDashboard({ route, navigation }) {
 
   const [viewMode, setViewMode] = useState('create');
   const [stats, setStats] = useState([]);
+  
+  // NEW: Organizer Categorization Scope
+  const [category, setCategory] = useState("General");
+  const ORGANIZER_CATEGORIES = ["General", "Tech", "Arts", "Sports", "Party", "Workshop"];
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanned, setScanned] = useState(false);
@@ -187,15 +441,133 @@ function OrganizerDashboard({ route, navigation }) {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
 
-  const API_URL = 'http://10.118.76.100:3000/api';
+  // ============================================
+  // NEW: Organizer Command Center (Phase 8 State)
+  // ============================================
+  const [manageEvents, setManageEvents] = useState([]);
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false);
+  const [isChatVisible, setIsChatVisible] = useState(false);
+  const [currentEventObj, setCurrentEventObj] = useState(null);
+  const [organizerQueries, setOrganizerQueries] = useState([]);
+  const [replyMessage, setReplyMessage] = useState('');
+
+  const [editTitle, setEditTitle] = useState('');
+  const [editDesc, setEditDesc] = useState('');
+  const [editVenue, setEditVenue] = useState('');
+  const [editLimit, setEditLimit] = useState('');
+  const [editCategory, setEditCategory] = useState('');
+  const [editImageUri, setEditImageUri] = useState(null);
+  // ============================================
+
+  const API_URL = 'http://10.126.236.100:3000/api';
+  const SOCKET_URL = 'http://10.126.236.100:3000'; // Our new Streaming port!
 
   useEffect(() => {
     if (viewMode === 'stats') {
       fetch(`${API_URL}/stats`).then(r => r.json()).then(data => {
         if (data.success) setStats(data.stats);
       }).catch(err => console.error(err));
+    } else if (viewMode === 'manage') {
+      fetchOrganizerEvents();
     }
   }, [viewMode]);
+
+  // Connect Organizer natively to WebSockets for real-time Chat Sync
+  useEffect(() => {
+    const socket = io(SOCKET_URL);
+    socket.on('new_event_query', (newQuery) => {
+      setOrganizerQueries((prev) => [...prev, newQuery]);
+    });
+    return () => socket.disconnect();
+  }, []);
+
+  // NEW: Command Center Methods
+  const fetchOrganizerEvents = async () => {
+    try {
+      const response = await fetch(`${API_URL}/events`);
+      const data = await response.json();
+      if (data.success) setManageEvents(data.events);
+    } catch (err) { console.error(err); }
+  };
+
+  const executeDelete = async (eventId) => {
+    Alert.alert("Destroy Event?", "Are you absolutely sure? This will wipe all registrations and chat history instantly.", [
+      { text: "Cancel", style: "cancel" },
+      { text: "Obliterate", style: "destructive", onPress: async () => {
+          try {
+            const response = await fetch(`${API_URL}/events/${eventId}`, { method: 'DELETE' });
+            const data = await response.json();
+            if (data.success) { Alert.alert("Success", data.message); fetchOrganizerEvents(); }
+          } catch(err) { Alert.alert("Error", "Server unreachable."); }
+      }}
+    ]);
+  };
+
+  const openEditModal = (event) => {
+    setCurrentEventObj(event); 
+    setEditTitle(event.title); 
+    setEditDesc(event.description);
+    setEditVenue(event.venue); 
+    setEditLimit(event.limit_participants.toString()); 
+    setEditCategory(event.category || 'General');
+    setEditImageUri(event.image_url);
+    setIsEditModalVisible(true);
+  };
+
+  const executeUpdate = async () => {
+    try {
+      const formData = new FormData();
+      formData.append('title', editTitle);
+      formData.append('description', editDesc);
+      formData.append('venue', editVenue);
+      formData.append('limit_participants', editLimit || 0);
+      formData.append('category', editCategory);
+      
+      if (editImageUri && !editImageUri.startsWith('http')) {
+        // Automatically bundle physical file native path
+        formData.append('poster', { uri: editImageUri, name: 'poster.jpg', type: 'image/jpeg' });
+      } else {
+        // Send the HTTP string backward intact
+        formData.append('image_url', editImageUri || '');
+      }
+
+      const response = await fetch(`${API_URL}/events/${currentEventObj.event_id}`, {
+        method: 'PUT',
+        body: formData
+      });
+      const data = await response.json();
+      if (data.success) { 
+        Alert.alert("Updated!", data.message); 
+        setIsEditModalVisible(false); 
+        fetchOrganizerEvents(); 
+      } else {
+        Alert.alert("Error", data.message);
+      }
+    } catch(err) { Alert.alert("Error", "Server unreachable."); }
+  };
+
+  const openOrganizerChat = async (event) => {
+    setCurrentEventObj(event);
+    setIsChatVisible(true);
+    try {
+      const response = await fetch(`${API_URL}/queries/${event.event_id}`);
+      const data = await response.json();
+      if (data.success) setOrganizerQueries(data.queries);
+    } catch (err) {}
+  };
+
+  const handleOrganizerReply = async () => {
+    if (!replyMessage.trim()) return;
+    try {
+      const response = await fetch(`${API_URL}/queries`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ event_id: currentEventObj.event_id, user_id: 1, user_name: `[Organizer] ${userName}`, message: replyMessage })
+      });
+      const data = await response.json();
+      if (data.success) setReplyMessage('');
+    } catch(err) {}
+  };
+
 
   // NEW: The magic function to fetch names, and open the high-performance Modal!
   const viewAttendees = async (eventId, eventTitle) => {
@@ -214,7 +586,7 @@ function OrganizerDashboard({ route, navigation }) {
   const exportToCSV = async () => {
     try {
       // 1. Construct the Raw CSV Text
-      let csvString = "Student Name,Email Address\n"; 
+      let csvString = "Student Name,Email Address\n";
       attendeesList.forEach(user => {
         csvString += `"${user.name}","${user.email}"\n`; // Creates the actual rows
       });
@@ -256,8 +628,12 @@ function OrganizerDashboard({ route, navigation }) {
     setIsPosting(true);
     try {
       const formData = new FormData();
-      formData.append('title', title); formData.append('description', description);
-      formData.append('date', formatDateTimeForMySQL(date)); formData.append('venue', venue); formData.append('limit_participants', limit || 0);
+      formData.append('title', title);
+      formData.append('description', description);
+      formData.append('date', formatDateTimeForMySQL(date));
+      formData.append('venue', venue);
+      formData.append('limit_participants', limitParticipants || 0);
+      formData.append('category', category); // SEND CATEGORY TO DB!
       if (imageUri) formData.append('poster', { uri: imageUri, name: 'poster.jpg', type: 'image/jpeg' });
 
       const response = await fetch(`${API_URL}/events`, { method: 'POST', body: formData });
@@ -315,7 +691,7 @@ function OrganizerDashboard({ route, navigation }) {
       {/* ========================================================= */}
       <Modal visible={isModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setIsModalVisible(false)}>
         <SafeAreaView style={{ flex: 1, backgroundColor: '#F7FAFC' }}>
-          
+
           <View style={styles.modalHeader}>
             <TouchableOpacity onPress={() => setIsModalVisible(false)}><Text style={styles.closeBtn}>✕ Close</Text></TouchableOpacity>
             <Text style={styles.modalTitle} numberOfLines={1}>{selectedEventTitle}</Text>
@@ -371,12 +747,15 @@ function OrganizerDashboard({ route, navigation }) {
       <Text style={styles.dashboardTitle}>Organizer Hub</Text>
       <Text style={styles.dashboardSubtitle}>Manage events natively, {userName}!</Text>
 
-      <View style={styles.tabContainer}>
+      <View style={[styles.tabContainer, { flexWrap: 'wrap' }]}>
         <TouchableOpacity style={[styles.tabButton, viewMode === 'create' && styles.tabActive]} onPress={() => setViewMode('create')}>
           <Text style={viewMode === 'create' ? styles.tabActiveText : styles.tabInactiveText}>Create Event</Text>
         </TouchableOpacity>
+        <TouchableOpacity style={[styles.tabButton, viewMode === 'manage' && styles.tabActive]} onPress={() => setViewMode('manage')}>
+          <Text style={viewMode === 'manage' ? styles.tabActiveText : styles.tabInactiveText}>Manage Hub</Text>
+        </TouchableOpacity>
         <TouchableOpacity style={[styles.tabButton, viewMode === 'scan' && styles.tabActive]} onPress={() => setViewMode('scan')}>
-          <Text style={viewMode === 'scan' ? styles.tabActiveText : styles.tabInactiveText}>Scan Tickets</Text>
+          <Text style={viewMode === 'scan' ? styles.tabActiveText : styles.tabInactiveText}>Scan</Text>
         </TouchableOpacity>
         <TouchableOpacity style={[styles.tabButton, viewMode === 'stats' && styles.tabActive]} onPress={() => setViewMode('stats')}>
           <Text style={viewMode === 'stats' ? styles.tabActiveText : styles.tabInactiveText}>Live Stats</Text>
@@ -387,9 +766,24 @@ function OrganizerDashboard({ route, navigation }) {
         <View style={styles.formCard}>
           <TextInput style={styles.input} placeholder="Event Title" value={title} onChangeText={setTitle} />
           <TextInput style={styles.input} placeholder="Description" value={description} onChangeText={setDescription} multiline />
-          <TextInput style={styles.input} placeholder="Venue" value={venue} onChangeText={setVenue} />
-          <TextInput style={styles.input} placeholder="Participant Limit" value={limit} onChangeText={setLimit} keyboardType="numeric" />
-          <Text style={styles.dateLabel}>Event Poster:</Text>
+          <TextInput style={styles.input} placeholder="Venue/Location" value={venue} onChangeText={setVenue} />
+          <TextInput style={styles.input} placeholder="Ticket/Capacity Limit (e.g. 50)" keyboardType="numeric" value={limitParticipants} onChangeText={setLimitParticipants} />
+          
+          <Text style={{ fontWeight: 'bold', marginTop: 10, marginBottom: 5 }}>Select Event Category:</Text>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
+            {ORGANIZER_CATEGORIES.map(cat => (
+              <TouchableOpacity 
+                key={cat} 
+                onPress={() => setCategory(cat)}
+                style={{ 
+                  backgroundColor: category === cat ? '#2B6CB0' : '#E2E8F0', 
+                  paddingHorizontal: 15, paddingVertical: 10, borderRadius: 20, marginRight: 10 
+                }}>
+                <Text style={{ color: category === cat ? '#FFF' : '#2D3748', fontWeight: 'bold' }}>{cat}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+
           <TouchableOpacity style={styles.uploadButton} onPress={pickImage}><Text style={styles.uploadButtonText}>{imageUri ? '🖼️ Change Gallery Image' : '📸 Pick Gallery Cover'}</Text></TouchableOpacity>
           {imageUri && <Image source={{ uri: imageUri }} style={styles.previewImage} resizeMode="cover" />}
 
@@ -398,8 +792,33 @@ function OrganizerDashboard({ route, navigation }) {
           {showDatePicker && <DateTimePicker value={date} mode="date" display="default" onChange={onChangeDate} />}
           {showTimePicker && <DateTimePicker value={date} mode="time" display="default" onChange={onChangeTime} />}
           <TouchableOpacity style={styles.button} onPress={handleCreateEvent} disabled={isPosting}>
-            {isPosting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Publish Event</Text>}
+            {isPosting ? <ActivityIndicator color="#FFF" /> : <Text style={styles.buttonText}>Publish Event Instantly</Text>}
           </TouchableOpacity>
+        </View>
+      ) : viewMode === 'manage' ? (
+        <View style={{ width: '100%' }}>
+          <Text style={styles.dashboardSubtitle}>Command Center 🎛️</Text>
+          {manageEvents.length === 0 ? <ActivityIndicator size="large" color="#3182CE" /> : null}
+          
+          {manageEvents.map(item => (
+            <View key={item.event_id.toString()} style={styles.statCard}>
+              <Text style={styles.eventTitle}>{item.title}</Text>
+              <Text style={styles.eventDate}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} | 📍 {item.venue}</Text>
+              
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: 15 }}>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: '#3182CE', padding: 10, marginRight: 5, marginTop: 0 }]} onPress={() => openEditModal(item)}>
+                  <Text style={{ color: '#FFF', fontWeight: 'bold', textAlign: 'center' }}>🖍️ Edit</Text>
+                </TouchableOpacity>
+                <TouchableOpacity style={[styles.button, { flex: 1, backgroundColor: '#E53E3E', padding: 10, marginLeft: 5, marginTop: 0 }]} onPress={() => executeDelete(item.event_id)}>
+                  <Text style={{ color: '#FFF', fontWeight: 'bold', textAlign: 'center' }}>❌ Delete</Text>
+                </TouchableOpacity>
+              </View>
+
+              <TouchableOpacity style={[styles.button, { backgroundColor: '#38A169', padding: 10, marginTop: 10 }]} onPress={() => openOrganizerChat(item)}>
+                <Text style={{ color: '#FFF', fontWeight: 'bold', textAlign: 'center' }}>💬 Enter Q&A Hub</Text>
+              </TouchableOpacity>
+            </View>
+          ))}
         </View>
       ) : viewMode === 'scan' ? (
         renderScanner()
@@ -407,19 +826,79 @@ function OrganizerDashboard({ route, navigation }) {
         renderStats()
       )}
 
+      {/* ========================================================= */}
+      {/* NEW: THE EDIT EVENT MODAL */}
+      {/* ========================================================= */}
+      <Modal visible={isEditModalVisible} animationType="slide" presentationStyle="formSheet">
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#FFF' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setIsEditModalVisible(false)}><Text style={styles.closeBtn}>✕ Cancel</Text></TouchableOpacity>
+            <Text style={styles.modalTitle} numberOfLines={1}>Edit Event</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20 }}>
+            <TextInput style={styles.input} placeholder="Title" value={editTitle} onChangeText={setEditTitle} />
+            <TextInput style={styles.input} placeholder="Description" value={editDesc} onChangeText={setEditDesc} multiline />
+            <TextInput style={styles.input} placeholder="Venue" value={editVenue} onChangeText={setEditVenue} />
+            <TextInput style={styles.input} placeholder="Capacity" value={editLimit} onChangeText={setEditLimit} keyboardType="numeric" />
+            
+            <Text style={{ fontWeight: 'bold', marginTop: 10, marginBottom: 5 }}>Select Event Category:</Text>
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 20 }}>
+              {ORGANIZER_CATEGORIES.map(cat => (
+                <TouchableOpacity key={cat} onPress={() => setEditCategory(cat)} style={{ backgroundColor: editCategory === cat ? '#2B6CB0' : '#E2E8F0', paddingHorizontal: 15, paddingVertical: 10, borderRadius: 20, marginRight: 10 }}>
+                  <Text style={{ color: editCategory === cat ? '#FFF' : '#2D3748', fontWeight: 'bold' }}>{cat}</Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            <TouchableOpacity style={styles.uploadButton} onPress={async () => {
+                const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [16, 9], quality: 0.8 });
+                if (!result.canceled) setEditImageUri(result.assets[0].uri);
+            }}><Text style={styles.uploadButtonText}>{editImageUri ? '🖼️ Change Image' : '📸 Pick New Image'}</Text></TouchableOpacity>
+            {editImageUri && <Image source={{ uri: editImageUri }} style={styles.previewImage} resizeMode="cover" />}
+
+            <TouchableOpacity style={[styles.button, { marginTop: 20 }]} onPress={executeUpdate}><Text style={styles.buttonText}>Save Changes</Text></TouchableOpacity>
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ========================================================= */}
+      {/* NEW: THE ORGANIZER Q&A CHAT MODAL */}
+      {/* ========================================================= */}
+      <Modal visible={isChatVisible} animationType="slide" presentationStyle="formSheet">
+        <SafeAreaView style={{ flex: 1, backgroundColor: '#F7FAFC' }}>
+          <View style={styles.modalHeader}>
+            <TouchableOpacity onPress={() => setIsChatVisible(false)}><Text style={styles.closeBtn}>✕ Close</Text></TouchableOpacity>
+            <Text style={styles.modalTitle} numberOfLines={1}>Live Chat: {currentEventObj?.title}</Text>
+            <View style={{ width: 40 }} />
+          </View>
+          <View style={{ flex: 1, padding: 20 }}>
+            <ScrollView contentContainerStyle={{ paddingBottom: 20 }}>
+              {organizerQueries.map((query, index) => (
+                <View key={index} style={{ backgroundColor: query.user_name.includes('[Organizer]') ? '#EBF8FF' : '#FFF', padding: 15, borderRadius: 10, marginBottom: 10, shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 2, borderWidth: query.user_name.includes('[Organizer]') ? 1 : 0, borderColor: '#63B3ED' }}>
+                  <Text style={{ fontWeight: 'bold', color: query.user_name.includes('[Organizer]') ? '#2B6CB0' : '#2D3748', marginBottom: 5 }}>{query.user_name}</Text>
+                  <Text style={{ color: '#4A5568' }}>{query.message}</Text>
+                </View>
+              ))}
+            </ScrollView>
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFF', padding: 10, borderRadius: 15, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5 }}>
+              <TextInput style={[styles.input, { flex: 1, marginBottom: 0, marginRight: 10, borderBottomWidth: 0, paddingLeft: 10 }]} placeholder="Reply to students..." value={replyMessage} onChangeText={setReplyMessage} />
+              <TouchableOpacity style={[styles.button, { width: 80, marginTop: 0 }]} onPress={handleOrganizerReply}><Text style={styles.buttonText}>Send</Text></TouchableOpacity>
+            </View>
+          </View>
+        </SafeAreaView>
+      </Modal>
+
       <TouchableOpacity style={styles.logoutButton} onPress={() => navigation.replace('Login')}><Text style={styles.buttonText}>Log Out</Text></TouchableOpacity>
     </ScrollView>
   );
 }
 
-
-
-
 // 3. Our Login/Signup Screen
 function LoginScreen({ navigation }) {
   const [name, setName] = useState(''); const [email, setEmail] = useState(''); const [password, setPassword] = useState('');
   const [role, setRole] = useState('student'); const [isLoginMode, setIsLoginMode] = useState(true); const [isLoading, setIsLoading] = useState(false);
-  const API_URL = 'http://10.118.76.100:3000/api';
+  const API_URL = 'http://10.126.236.100:3000/api';
 
   const handleAuthentication = async () => {
     if (!email || !password || (!isLoginMode && !name)) { Alert.alert('Hold on!', 'Please fill out all fields.'); return; }
@@ -523,6 +1002,13 @@ const styles = StyleSheet.create({
   downloadBtn: { fontSize: 16, color: '#38A169', fontWeight: 'bold' },
   modalTitle: { fontSize: 16, fontWeight: 'bold', color: '#2D3748', maxWidth: '50%' },
   modalSubHeader: { backgroundColor: '#EBF8FF', padding: 10, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#BEE3F8', marginBottom: 10 },
+
+  /* Notifications UI Styles */
+  alertCard: { width: '100%', backgroundColor: '#FFFFFF', padding: 20, borderRadius: 12, marginBottom: 15, borderWidth: 1, borderColor: '#EDF2F7', shadowColor: '#000', shadowOpacity: 0.05, shadowRadius: 3, elevation: 2, position: 'relative' },
+  alertCardUnread: { backgroundColor: '#EBF8FF', borderColor: '#90CDF4' },
+  alertText: { fontSize: 16, color: '#2D3748', fontWeight: 'bold', marginBottom: 5, paddingRight: 20 },
+  alertDate: { fontSize: 13, color: '#718096' },
+  unreadDot: { position: 'absolute', top: 20, right: 15, width: 12, height: 12, borderRadius: 6, backgroundColor: '#E53E3E' },
 
 
   /* Existing Styles */
