@@ -98,7 +98,7 @@ app.put('/api/events/:event_id', upload.single('poster'), (req, res) => {
   db.query(sqlQuery, [title, description, venue, limit_participants, category, finalImageUrl, eventId], (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error while updating event.' });
     if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found.' });
-    
+
     // Broadcast edit natively
     io.emit('new_event_alert', { message: `Important: The event "${title}" has been recently updated by the Organizer!` });
     res.json({ success: true, message: 'Event flawlessly updated!' });
@@ -117,7 +117,7 @@ app.delete('/api/events/:event_id', (req, res) => {
       db.query('DELETE FROM events WHERE event_id = ?', [eventId], (err, result) => {
         if (err) return res.status(500).json({ success: false, message: 'Database error while deleting.' });
         if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found!' });
-        
+
         // Broadcast delete natively
         io.emit('new_event_alert', { message: `Alert: An event has been unexpectedly canceled and physically removed.` });
         res.json({ success: true, message: 'Event totally eradicated from the database!' });
