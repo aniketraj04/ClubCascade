@@ -188,20 +188,31 @@ const CategoryPill = ({ label, active, onPress, color }) => (
 
 const TabBar = ({ tabs, active, onChange }) => (
   <View style={styles.tabBar}>
-    {tabs.map(t => (
-      <TouchableOpacity key={t.key} onPress={() => onChange(t.key)}
-        style={[styles.tabItem, active === t.key && styles.tabItemActive]}
-        activeOpacity={0.8}>
-        {active === t.key
-          ? <LinearGradient colors={GRAD_PURPLE} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }}
-            style={StyleSheet.absoluteFill} borderRadius={14} />
-          : null}
-        <Text style={{ fontSize: 16 }}>{t.icon}</Text>
-        <Text style={[styles.tabLabel, active === t.key && styles.tabLabelActive]}>
-          {t.label}{t.badge ? ` (${t.badge})` : ''}
-        </Text>
-      </TouchableOpacity>
-    ))}
+    {tabs.map(t => {
+      const isActive = active === t.key;
+      return (
+        <TouchableOpacity key={t.key} onPress={() => onChange(t.key)}
+          style={styles.tabItem} activeOpacity={0.7}>
+          {/* Active indicator dot */}
+          <View style={styles.tabIconWrap}>
+            {isActive && (
+              <LinearGradient colors={GRAD_PURPLE}
+                style={StyleSheet.absoluteFill} borderRadius={16} />
+            )}
+            <Text style={[styles.tabIcon, isActive && styles.tabIconActive]}>{t.icon}</Text>
+            {/* Unread badge */}
+            {t.badge ? (
+              <View style={styles.tabBadge}>
+                <Text style={styles.tabBadgeText}>{t.badge > 9 ? '9+' : t.badge}</Text>
+              </View>
+            ) : null}
+          </View>
+          <Text style={[styles.tabLabel, isActive && styles.tabLabelActive]}>
+            {t.label}
+          </Text>
+        </TouchableOpacity>
+      );
+    })}
   </View>
 );
 
@@ -812,21 +823,18 @@ function StudentDashboard({ route, navigation }) {
       <GlowDot color={COLORS.accent1} size={300} style={{ top: -60, right: -60 }} />
       <GlowDot color={COLORS.accent2} size={200} style={{ bottom: 200, left: -60 }} />
 
-      {/* Header — hidden on profile tab since profile has its own layout */}
+      {/* ── Header (hidden on Profile since ProfileScreen has its own top) ── */}
       {viewMode !== 'profile' && (
         <View style={styles.screenHeader}>
           <View>
             <Text style={styles.screenHeaderSub}>Hey, {userName.split(' ')[0]} 👋</Text>
             <Text style={styles.screenHeaderTitle}>Student Hub</Text>
           </View>
-          {/* Avatar shortcut to profile */}
           <TouchableOpacity onPress={() => setViewMode('profile')} activeOpacity={0.8}>
             <InitialsAvatar name={userName} size={38} fontSize={14} />
           </TouchableOpacity>
         </View>
       )}
-
-      <TabBar tabs={STUDENT_TABS} active={viewMode} onChange={setViewMode} />
 
       {/* ── Profile Tab ── */}
       {viewMode === 'profile' && (
@@ -840,7 +848,7 @@ function StudentDashboard({ route, navigation }) {
 
       {/* ── Filters (Discover only) ── */}
       {viewMode === 'events' && (
-        <View style={{ paddingHorizontal: 20, marginBottom: 16 }}>
+        <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
           <View style={styles.searchBar}>
             <Text style={{ color: COLORS.textMuted, marginRight: 8, fontSize: 16 }}>🔍</Text>
             <TextInput
@@ -892,7 +900,7 @@ function StudentDashboard({ route, navigation }) {
                   viewMode === 'tickets' ? renderTicket :
                     renderAlert
               }
-              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 40 }}
+              contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
               showsVerticalScrollIndicator={false}
               ListEmptyComponent={
                 <View style={styles.emptyState}>
@@ -909,6 +917,9 @@ function StudentDashboard({ route, navigation }) {
             />
           )
       )}
+
+      {/* ── Bottom Tab Bar (Instagram-style) ── */}
+      <TabBar tabs={STUDENT_TABS} active={viewMode} onChange={setViewMode} />
 
       {/* ── Event Details Modal ── */}
       {selectedEvent && (
@@ -1673,20 +1684,38 @@ const styles = StyleSheet.create({
   },
   gradBtnText: { color: '#FFF', fontSize: 16, fontWeight: '800', letterSpacing: 0.3 },
 
-  // ── Tab Bar ──
+  // ── Bottom Tab Bar (Instagram-style) ──
   tabBar: {
-    flexDirection: 'row', marginHorizontal: 20, marginBottom: 16,
-    backgroundColor: 'rgba(255,255,255,0.05)',
-    borderRadius: 16, padding: 4,
-    borderWidth: 1, borderColor: COLORS.border,
+    position: 'absolute',
+    bottom: 0, left: 0, right: 0,
+    flexDirection: 'row',
+    backgroundColor: 'rgba(8,11,20,0.92)',
+    borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.08)',
+    paddingTop: 10,
+    paddingBottom: Platform.OS === 'ios' ? 28 : 14,
+    paddingHorizontal: 8,
   },
   tabItem: {
-    flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
-    gap: 4, paddingVertical: 10, borderRadius: 14, overflow: 'hidden',
+    flex: 1, alignItems: 'center', justifyContent: 'center', gap: 4,
   },
-  tabItemActive: {},
-  tabLabel: { color: COLORS.textMuted, fontWeight: '700', fontSize: 11 },
-  tabLabelActive: { color: '#FFF' },
+  tabIconWrap: {
+    width: 48, height: 32,
+    borderRadius: 16,
+    alignItems: 'center', justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  tabIcon: { fontSize: 20 },
+  tabIconActive: {},
+  tabBadge: {
+    position: 'absolute', top: -2, right: -2,
+    backgroundColor: COLORS.accent2,
+    borderRadius: 8, minWidth: 16, height: 16,
+    alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1.5, borderColor: COLORS.bg,
+  },
+  tabBadgeText: { color: '#FFF', fontSize: 9, fontWeight: '800' },
+  tabLabel: { color: COLORS.textMuted, fontWeight: '600', fontSize: 10 },
+  tabLabelActive: { color: COLORS.accent1 },
 
   // ── Category Pill ──
   pill: {
