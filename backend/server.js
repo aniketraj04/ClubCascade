@@ -55,20 +55,35 @@ app.post('/api/login', (req, res) => {
   const sqlQuery = 'SELECT * FROM users WHERE email = ? AND password = ?';
   db.query(sqlQuery, [email, password], (err, results) => {
     if (err) return res.status(500).json({ error: 'Database error' });
-    if (results.length > 0) res.json({ success: true, message: `Welcome back, ${results[0].name}!`, user: results[0] });
+    if (results.length > 0) {
+      if (results[0].account_status === 'pending') {
+         return res.json({ success: false, message: 'Your account is pending Admin approval.' });
+      }
+      res.json({ success: true, message: `Welcome back, ${results[0].name}!`, user: results[0] });
+    }
     else res.json({ success: false, message: 'Invalid email or password' });
   });
 });
 
 // SIGNUP API
 app.post('/api/signup', (req, res) => {
-  const { name, email, password, role } = req.body;
+  const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year } = req.body;
   if (!name || !email || !password) return res.json({ success: false, message: 'Please provide all details.' });
+  
+  if (role === 'organizer') {
+     if (!phone || !club_name || !club_role || !department || !student_id || !study_year) {
+         return res.json({ success: false, message: 'Organizers must strictly provide all verification details.' });
+     }
+  }
 
-  const sqlQuery = 'INSERT INTO users (name, email, password, role) VALUES (?, ?, ?, ?)';
-  db.query(sqlQuery, [name, email, password, role || 'student'], (err) => {
+  const accountStatus = role === 'organizer' ? 'pending' : 'approved';
+  // Use user_id since SQL complains if we try to insert null mapping for Auto Increment, wait, we are inserting into 'users' not 'user_id' but id. 
+  const sqlQuery = 'INSERT INTO users (name, email, password, role, account_status, phone, club_name, club_role, department, student_id, study_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  db.query(sqlQuery, [name, email, password, role || 'student', accountStatus, phone || null, club_name || null, club_role || null, department || null, student_id || null, study_year || null], (err) => {
     if (err && err.code === 'ER_DUP_ENTRY') return res.json({ success: false, message: 'Email already exists' });
     else if (err) return res.status(500).json({ error: 'Database error' });
+    
+    if (role === 'organizer') return res.json({ success: true, message: 'Application submitted! Waiting for Admin approval.' });
     res.json({ success: true, message: 'Account securely created!' });
   });
 });
@@ -78,6 +93,16 @@ app.get('/api/events', (req, res) => {
   const sqlQuery = 'SELECT * FROM events ORDER BY date ASC';
   db.query(sqlQuery, (err, results) => {
     if (err) return res.status(500).json({ error: 'Database error' });
+    res.json({ success: true, events: results });
+  });
+});
+
+// FETCH ISOLATED ORGANIZER EVENTS API
+app.get('/api/organizers/:org_id/events', (req, res) => {
+  const orgId = req.params.org_id;
+  const sqlQuery = 'SELECT * FROM events WHERE organizer_id = ? ORDER BY date ASC';
+  db.query(sqlQuery, [orgId], (err, results) => {
+    if (err) return res.status(500).json({ error: 'Database error fetching your events' });
     res.json({ success: true, events: results });
   });
 });
@@ -127,9 +152,8 @@ app.delete('/api/events/:event_id', (req, res) => {
 });
 // ===================================================================
 
-// CREATE EVENT API (Now handles File Uploads from the Gallery and Categorization!)
 app.post('/api/events', upload.single('poster'), (req, res) => {
-  const { title, description, date, venue, club_id, limit_participants, category } = req.body;
+  const { title, description, date, venue, club_id, limit_participants, category, organizer_id } = req.body;
 
   console.log("-> Processing new categorized event:", title);
 
@@ -141,8 +165,8 @@ app.post('/api/events', upload.single('poster'), (req, res) => {
     console.log("-> Successfully saved gallery image locally:", req.file.filename);
   }
 
-  const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category) VALUES (?, ?, ?, ?, ?, ?, ?, ?)';
-  const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General'];
+  const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+  const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', organizer_id || null];
 
   db.query(sqlQuery, values, (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database refused to save: ' + err.message });
@@ -389,6 +413,98 @@ app.post('/api/queries', (req, res) => {
       res.json({ success: true, message: 'Message securely sent!' });
     }
   );
+});
+// ===================================================================
+
+// ===================================================================
+// NEW (PHASE 9): ADMIN ROUTES
+// ===================================================================
+app.get('/api/admin/users', (req, res) => {
+  db.query('SELECT id AS user_id, name, email, role, account_status, created_at FROM users ORDER BY created_at DESC', (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error fetching users.' });
+    res.json({ success: true, users: results });
+  });
+});
+
+app.delete('/api/admin/users/:user_id', (req, res) => {
+  const userId = req.params.user_id;
+
+  // We must cascade delete registrations and queries manually if needed, or let DB handle if ON DELETE CASCADE is set
+  // To be safe, we will manually delete dependencies first:
+  db.query('DELETE FROM registrations WHERE user_id = ?', [userId], () => {
+    db.query('DELETE FROM event_queries WHERE user_id = ?', [userId], () => {
+      db.query('DELETE FROM users WHERE id = ?', [userId], (err, result) => {
+        if (err) return res.status(500).json({ success: false, message: 'Database error deleting user.' });
+        if (result.affectedRows === 0) return res.json({ success: false, message: 'User not found!' });
+        
+        io.emit('new_event_alert', { message: 'A user has been permanently banned by the Admin.' });
+        res.json({ success: true, message: 'User eradicated from the system!' });
+      });
+    });
+  });
+});
+
+app.delete('/api/admin/events/:event_id', (req, res) => {
+  const eventId = req.params.event_id;
+
+  db.query('DELETE FROM registrations WHERE event_id = ?', [eventId], () => {
+    db.query('DELETE FROM event_queries WHERE event_id = ?', [eventId], () => {
+      db.query('DELETE FROM events WHERE event_id = ?', [eventId], (err, result) => {
+        if (err) return res.status(500).json({ success: false, message: 'Database error deleting event.' });
+        if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found!' });
+        
+        io.emit('new_event_alert', { message: 'Admin Override: An event has been forcefully removed.' });
+        res.json({ success: true, message: 'Event completely annihilated by Admin!' });
+      });
+    });
+  });
+});
+
+// ===================================================================
+// NEW (PHASE 9.5): ADVANCED ADMIN LOGIC
+// ===================================================================
+
+app.put('/api/admin/events/:event_id/approve', (req, res) => {
+  const eventId = req.params.event_id;
+  db.query("UPDATE events SET status = 'approved' WHERE event_id = ?", [eventId], (err, result) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error approving event.' });
+    
+    io.emit('new_event_alert', { message: '📣 An Organizer just launched a brand new EVENT! Check it out.' });
+    res.json({ success: true, message: 'Event successfully published live!' });
+  });
+});
+
+app.put('/api/admin/users/:user_id/approve', (req, res) => {
+  const userId = req.params.user_id;
+  db.query("UPDATE users SET account_status = 'approved' WHERE id = ?", [userId], (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error approving user.' });
+    res.json({ success: true, message: 'Account has been verified and approved!' });
+  });
+});
+
+app.put('/api/admin/users/:user_id/role', (req, res) => {
+  const userId = req.params.user_id;
+  db.query("UPDATE users SET role = 'organizer' WHERE id = ?", [userId], (err, result) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error assigning role.' });
+    res.json({ success: true, message: 'Student successfully promoted to Organizer!' });
+  });
+});
+
+app.get('/api/admin/stats', (req, res) => {
+  const stats = {};
+  db.query("SELECT COUNT(*) AS totalEvents FROM events", (err, eRes) => {
+    if (!err) stats.totalEvents = eRes[0].totalEvents;
+    db.query("SELECT COUNT(*) AS totalRegs, SUM(attended) AS totalAttendance FROM registrations", (err, rRes) => {
+      if (!err) {
+        stats.totalRegistrations = rRes[0].totalRegs;
+        stats.attendanceRate = rRes[0].totalRegs ? Math.round((rRes[0].totalAttendance / rRes[0].totalRegs) * 100) : 0;
+      }
+      db.query("SELECT COUNT(*) AS totalQueries FROM event_queries", (err, qRes) => {
+        if (!err) stats.totalEngagement = qRes[0].totalQueries;
+        res.json({ success: true, stats });
+      });
+    });
+  });
 });
 // ===================================================================
 

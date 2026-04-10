@@ -244,9 +244,24 @@ function LoginScreen({ navigation }) {
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [role, setRole] = useState('student');
+  
+  // Organizer specific fields
+  const [phone, setPhone] = useState('');
+  const [clubName, setClubName] = useState('');
+  const [clubRole, setClubRole] = useState('');
+  const [department, setDepartment] = useState('');
+  const [studentId, setStudentId] = useState('');
+  const [studyYear, setStudyYear] = useState('');
+
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+
+  const CLUB_ROLES = ['President', 'Vice President', 'Coordinator', 'Core Member'];
+  const DEPARTMENTS = ['Computer Science', 'Mechanical', 'Electronics', 'Business', 'Arts'];
+  const STUDY_YEARS = ['1st Year', '2nd Year', '3rd Year', 'Final Year'];
+  const CLUB_NAMES = ['Tech Society', 'E-Sports', 'Robotics', 'Debate', 'Music Club'];
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
@@ -261,16 +276,29 @@ function LoginScreen({ navigation }) {
 
   const handleAuthentication = async () => {
     if (!email || !password || (!isLoginMode && !name)) {
-      Alert.alert('Hold on!', 'Please fill out all fields.');
+      Alert.alert('Hold on!', 'Please fill out all basic fields.');
       return;
     }
+    if (!isLoginMode && password !== confirmPassword) {
+      Alert.alert('Mismatch', 'Passwords do not match!');
+      return;
+    }
+    if (!isLoginMode && role === 'organizer') {
+       if (!phone || !clubName || !clubRole || !department || !studentId || !studyYear) {
+          Alert.alert('Hold on!', 'All Organizer Verification details are strictly required!');
+          return;
+       }
+    }
+    
     setIsLoading(true);
     try {
       const response = await fetch(`${API_URL}${isLoginMode ? '/login' : '/signup'}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
-          isLoginMode ? { email, password } : { name, email, password, role }
+          isLoginMode 
+             ? { email, password } 
+             : { name, email, password, role, phone, club_name: clubName, club_role: clubRole, department, student_id: studentId, study_year: studyYear }
         ),
       });
       const data = await response.json();
@@ -278,8 +306,10 @@ function LoginScreen({ navigation }) {
         if (isLoginMode) {
           if (data.user.role === 'student')
             navigation.replace('Student', { userName: data.user.name, userId: data.user.id });
+          else if (data.user.role === 'admin')
+            navigation.replace('Admin', { userName: data.user.name, userId: data.user.id });
           else
-            navigation.replace('Organizer', { userName: data.user.name });
+            navigation.replace('Organizer', { userName: data.user.name, userId: data.user.id });
         } else {
           Alert.alert('Account created! ✨', data.message);
           setIsLoginMode(true);
@@ -335,6 +365,15 @@ function LoginScreen({ navigation }) {
               onChangeText={setPassword}
               secureTextEntry
             />
+            
+            {!isLoginMode && (
+              <GlassInput
+                placeholder="Confirm Password"
+                value={confirmPassword}
+                onChangeText={setConfirmPassword}
+                secureTextEntry
+              />
+            )}
 
             {!isLoginMode && (
               <View style={{ marginBottom: 16 }}>
@@ -355,6 +394,43 @@ function LoginScreen({ navigation }) {
                     </TouchableOpacity>
                   ))}
                 </View>
+              </View>
+            )}
+
+            {!isLoginMode && role === 'organizer' && (
+              <View style={{ marginBottom: 16 }}>
+                <Text style={[styles.labelText, { color: COLORS.accent1, fontSize: 16, marginBottom: 12 }]}>🚀 Verification Required</Text>
+                
+                <GlassInput placeholder="Phone Number" keyboardType="phone-pad" value={phone} onChangeText={setPhone} />
+                <GlassInput placeholder="Student ID / Enrollment No." value={studentId} onChangeText={setStudentId} />
+                
+                <Text style={styles.labelText}>Club Name</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {CLUB_NAMES.map(c => (
+                    <CategoryPill key={c} label={c} active={clubName === c} onPress={() => setClubName(c)} color={COLORS.accent1} />
+                  ))}
+                </ScrollView>
+
+                <Text style={styles.labelText}>Club Role</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {CLUB_ROLES.map(c => (
+                    <CategoryPill key={c} label={c} active={clubRole === c} onPress={() => setClubRole(c)} color={COLORS.accent2} />
+                  ))}
+                </ScrollView>
+
+                <Text style={styles.labelText}>Department</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {DEPARTMENTS.map(c => (
+                    <CategoryPill key={c} label={c} active={department === c} onPress={() => setDepartment(c)} color={COLORS.accent3} />
+                  ))}
+                </ScrollView>
+                
+                <Text style={styles.labelText}>Year of Study</Text>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginBottom: 12 }}>
+                  {STUDY_YEARS.map(c => (
+                    <CategoryPill key={c} label={c} active={studyYear === c} onPress={() => setStudyYear(c)} color={COLORS.success} />
+                  ))}
+                </ScrollView>
               </View>
             )}
 
@@ -385,7 +461,9 @@ function LoginScreen({ navigation }) {
 
 // ─── Section 2: PROFILE SCREEN ────────────────────────────────────────
 function ProfileScreen({ userName, userId, tickets, navigation }) {
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const attendedTickets = tickets.filter(t => t.attended === 1);
+  const pastTickets = tickets.filter(t => t.attended === 1 || new Date(t.date) < new Date()).sort((a,b) => new Date(b.date) - new Date(a.date));
   const upcomingTickets = tickets.filter(t => t.attended !== 1 && new Date(t.date) > new Date());
   const streak = computeStreak(tickets);
 
@@ -499,6 +577,36 @@ function ProfileScreen({ userName, userId, tickets, navigation }) {
         </View>
       </View>
 
+      {/* ── Event History ── */}
+      {pastTickets.length > 0 && (
+        <View style={styles.profileSection}>
+          <TouchableOpacity 
+            onPress={() => setIsHistoryOpen(!isHistoryOpen)} 
+            style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={[styles.profileSectionTitle, { marginBottom: 0 }]}>EVENT HISTORY</Text>
+            <Text style={{ color: COLORS.accent1, fontSize: 16, fontWeight: '600' }}>{isHistoryOpen ? 'Hide' : 'Show'}</Text>
+          </TouchableOpacity>
+          
+          {isHistoryOpen && pastTickets.map((t, idx) => (
+            <GlassCard key={idx} style={{ marginBottom: 8, padding: 12, flexDirection: 'row', alignItems: 'center' }}>
+              <View style={{ flex: 1 }}>
+                <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '700' }}>{t.title}</Text>
+                <Text style={{ color: COLORS.textMuted, fontSize: 13, marginTop: 4 }}>
+                  {new Date(t.date).toLocaleDateString()} • {t.venue}
+                </Text>
+              </View>
+              {t.attended === 1 ? (
+                <Text style={{ fontSize: 24 }}>✅</Text>
+              ) : (
+                <View style={{ backgroundColor: COLORS.danger + '20', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, borderWidth: 1, borderColor: COLORS.danger + '80' }}>
+                  <Text style={{ color: COLORS.danger, fontWeight: '800', fontSize: 10 }}>MISSED</Text>
+                </View>
+              )}
+            </GlassCard>
+          ))}
+        </View>
+      )}
+
       {/* ── Settings Menu ── */}
       <View style={styles.profileSection}>
         <Text style={styles.profileSectionTitle}>SETTINGS</Text>
@@ -608,7 +716,10 @@ function StudentDashboard({ route, navigation }) {
     try {
       const r = await fetch(`${API_URL}/events`);
       const d = await r.json();
-      if (d.success) setEvents(d.events);
+      if (d.success) {
+        const publishedEvents = d.events.filter(e => e.status !== 'pending');
+        setEvents(publishedEvents);
+      }
     } catch (_) { Alert.alert('Error', 'Could not load events.'); }
     finally { setIsLoading(false); }
   };
@@ -887,7 +998,7 @@ function StudentDashboard({ route, navigation }) {
             <FlatList
               data={
                 viewMode === 'events' ? filteredEvents :
-                  viewMode === 'tickets' ? myTickets :
+                  viewMode === 'tickets' ? myTickets.filter(t => !t.attended) :
                     notifications
               }
               keyExtractor={item =>
@@ -1025,7 +1136,7 @@ function StudentDashboard({ route, navigation }) {
 
 // ─── Section 4: ORGANIZER DASHBOARD ──────────────────────────────────
 function OrganizerDashboard({ route, navigation }) {
-  const { userName } = route.params;
+  const { userName, userId } = route.params;
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [venue, setVenue] = useState('');
@@ -1078,7 +1189,7 @@ function OrganizerDashboard({ route, navigation }) {
 
   const fetchOrganizerEvents = async () => {
     try {
-      const r = await fetch(`${API_URL}/events`);
+      const r = await fetch(`${API_URL}/organizers/${userId}/events`);
       const d = await r.json();
       if (d.success) setManageEvents(d.events);
     } catch (_) { }
@@ -1215,6 +1326,7 @@ function OrganizerDashboard({ route, navigation }) {
       formData.append('venue', venue);
       formData.append('limit_participants', limitParticipants || 0);
       formData.append('category', category);
+      formData.append('organizer_id', userId);
       if (imageUri) formData.append('poster', { uri: imageUri, name: 'poster.jpg', type: 'image/jpeg' });
       const r = await fetch(`${API_URL}/events`, { method: 'POST', body: formData });
       const d = await r.json();
@@ -1396,8 +1508,6 @@ function OrganizerDashboard({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      <TabBar tabs={ORG_TABS} active={viewMode} onChange={setViewMode} />
-
       {/* ── CREATE ── */}
       {viewMode === 'create' && (
         <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
@@ -1501,6 +1611,8 @@ function OrganizerDashboard({ route, navigation }) {
       {viewMode === 'scan' && renderScanner()}
       {viewMode === 'stats' && renderStats()}
 
+      <TabBar tabs={ORG_TABS} active={viewMode} onChange={setViewMode} />
+
       {/* ── Edit Modal ── */}
       <Modal visible={isEditModalVisible} animationType="slide" presentationStyle="formSheet">
         <SafeAreaView style={{ flex: 1, backgroundColor: COLORS.bg }}>
@@ -1603,7 +1715,242 @@ function OrganizerDashboard({ route, navigation }) {
   );
 }
 
-// ─── Section 5: Router ────────────────────────────────────────────────
+// ─── Section 5: ADMIN DASHBOARD ──────────────────────────────────────
+function AdminDashboard({ route, navigation }) {
+  const { userName } = route.params;
+  const [viewMode, setViewMode] = useState('stats');
+  const [users, setUsers] = useState([]);
+  const [events, setEvents] = useState([]);
+  const [stats, setStats] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const API_URL = 'http://10.126.236.100:3000/api';
+
+  const ADMIN_TABS = [
+    { key: 'stats', icon: '📊', label: 'Analytics' },
+    { key: 'users', icon: '👥', label: 'Users' },
+    { key: 'events', icon: '🎪', label: 'Events' }
+  ];
+
+  useEffect(() => {
+    if (viewMode === 'stats') fetchStats();
+    else if (viewMode === 'users') fetchUsers();
+    else fetchEvents();
+  }, [viewMode]);
+
+  const fetchStats = async () => {
+    setIsLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/admin/stats`);
+      const d = await r.json();
+      if (d.success) setStats(d.stats);
+    } catch (_) { } finally { setIsLoading(false); }
+  };
+
+  const fetchUsers = async () => {
+    setIsLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/admin/users`);
+      const d = await r.json();
+      if (d.success) setUsers(d.users);
+    } catch (_) { } finally { setIsLoading(false); }
+  };
+
+  const fetchEvents = async () => {
+    setIsLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/events`); // we reuse public events endpoint for listing
+      const d = await r.json();
+      if (d.success) setEvents(d.events);
+    } catch (_) { } finally { setIsLoading(false); }
+  };
+
+  const handlePromoteUser = (userId, name) => {
+    Alert.alert('Promote User', `Upgrade ${name} to an Organizer?`, [
+       { text: 'Cancel', style: 'cancel' },
+       { text: 'Promote', style: 'default', onPress: async () => {
+          try {
+             await fetch(`${API_URL}/admin/users/${userId}/role`, { method: 'PUT' });
+             fetchUsers();
+          } catch (_) {}
+       }}
+    ]);
+  };
+  
+  const handleApproveUser = (userId, name) => {
+    Alert.alert('Approve Organizer', `Allow ${name} to access the Organizer Hub?`, [
+       { text: 'Cancel', style: 'cancel' },
+       { text: 'Approve', style: 'default', onPress: async () => {
+          try {
+             await fetch(`${API_URL}/admin/users/${userId}/approve`, { method: 'PUT' });
+             fetchUsers();
+          } catch (_) {}
+       }}
+    ]);
+  };
+  
+  const handleApproveEvent = (eventId) => {
+     Alert.alert('Approve Event', 'Make this event visible to all students?', [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Publish Live', onPress: async () => {
+           try {
+              await fetch(`${API_URL}/admin/events/${eventId}/approve`, { method: 'PUT' });
+              fetchEvents();
+           } catch (_) {}
+        }}
+     ]);
+  };
+
+  const handleDeleteUser = (userId, name) => {
+    Alert.alert('BAN USER', `Are you sure you want to permanently delete ${name}?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Eradicate', style: 'destructive',
+        onPress: async () => {
+          try {
+            await fetch(`${API_URL}/admin/users/${userId}`, { method: 'DELETE' });
+            fetchUsers();
+          } catch (_) { }
+        }
+      }
+    ]);
+  };
+
+  const handleDeleteEvent = (eventId, title) => {
+    Alert.alert('DELETE EVENT', `Destroy event "${title}" globally?`, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Destroy', style: 'destructive',
+        onPress: async () => {
+          try {
+            await fetch(`${API_URL}/admin/events/${eventId}`, { method: 'DELETE' });
+            fetchEvents();
+          } catch (_) { }
+        }
+      }
+    ]);
+  };
+
+  const handleAdminLogout = () => {
+    Alert.alert('Log out?', 'Leaving God-Mode.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log out', style: 'destructive', onPress: () => navigation.replace('Login') },
+    ]);
+  };
+
+  const renderAnalyticCard = (title, value, icon, color) => (
+    <GlassCard style={{ flex: 1, padding: 20, alignItems: 'center', marginBottom: 12 }}>
+      <Text style={{ fontSize: 32 }}>{icon}</Text>
+      <Text style={{ fontSize: 28, fontWeight: '900', color: color, marginVertical: 8 }}>{value || 0}</Text>
+      <Text style={{ color: COLORS.textMuted, fontSize: 13, fontWeight: '700', textAlign: 'center' }}>{title}</Text>
+    </GlassCard>
+  );
+
+  const renderUser = ({ item }) => (
+    <GlassCard style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
+      <InitialsAvatar name={item.name} size={48} fontSize={18} />
+      <View style={{ flex: 1, marginLeft: 12 }}>
+        <Text style={{ fontSize: 18, color: COLORS.text, fontWeight: '800' }}>{item.name}</Text>
+        <Text style={{ color: COLORS.textMuted, fontSize: 13 }}>{item.email}</Text>
+        <Text style={{ color: item.role === 'admin' ? COLORS.danger : COLORS.accent3, fontSize: 12, fontWeight: '700', marginTop: 4 }}>
+          ROLE: {item.role.toUpperCase()}
+          {item.account_status === 'pending' && <Text style={{ color: '#FFA500' }}> (PENDING)</Text>}
+        </Text>
+      </View>
+      {item.account_status === 'pending' && item.role === 'organizer' && (
+        <TouchableOpacity onPress={() => handleApproveUser(item.user_id, item.name)}
+           style={{ padding: 12, marginRight: 8, backgroundColor: '#00FF0030', borderRadius: 12, borderWidth: 1, borderColor: '#00FF00' }}>
+           <Text style={{ fontSize: 16 }}>✅</Text>
+        </TouchableOpacity>
+      )}
+      {item.role === 'student' && (
+        <TouchableOpacity onPress={() => handlePromoteUser(item.user_id, item.name)}
+           style={{ padding: 12, marginRight: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 }}>
+           <Text style={{ fontSize: 16 }}>⭐</Text>
+        </TouchableOpacity>
+      )}
+      {item.role !== 'admin' && (
+        <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)}
+          style={{ backgroundColor: COLORS.danger + '30', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.danger + '60' }}>
+          <Text style={{ fontSize: 16 }}>💀</Text>
+        </TouchableOpacity>
+      )}
+    </GlassCard>
+  );
+
+  const renderGlobalEvent = ({ item }) => (
+    <GlassCard style={{ marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between' }}>
+         <View style={{ flex: 1 }}>
+           <Text style={{ fontSize: 18, color: COLORS.text, fontWeight: '800' }}>{item.title}</Text>
+           <Text style={{ color: COLORS.textSub, fontSize: 13, marginBottom: 8 }}>{item.venue} • {new Date(item.date).toLocaleDateString()}</Text>
+           <Text style={{ color: item.status === 'pending' ? '#FFA500' : '#00FF00', fontWeight: '800', fontSize: 12 }}>
+              STATUS: {item.status?.toUpperCase() || 'APPROVED'}
+           </Text>
+         </View>
+         
+         <View style={{ flexDirection: 'row', height: 48 }}>
+           {item.status === 'pending' && (
+             <TouchableOpacity onPress={() => handleApproveEvent(item.event_id)}
+                style={{ backgroundColor: '#00FF0030', padding: 12, borderRadius: 12, marginRight: 8, borderWidth: 1, borderColor: '#00FF00' }}>
+                <Text style={{ fontSize: 18 }}>✅</Text>
+             </TouchableOpacity>
+           )}
+           <TouchableOpacity onPress={() => handleDeleteEvent(item.event_id, item.title)}
+             style={{ backgroundColor: COLORS.danger + '30', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.danger + '60' }}>
+             <Text style={{ fontSize: 18 }}>💣</Text>
+           </TouchableOpacity>
+         </View>
+      </View>
+    </GlassCard>
+  );
+
+  return (
+    <SafeAreaView style={styles.screen}>
+      <StatusBar barStyle="light-content" />
+      <GlowDot color={COLORS.danger} size={300} style={{ top: -60, right: -60 }} />
+      <GlowDot color={COLORS.accent1} size={200} style={{ bottom: 200, left: -60 }} />
+
+      <View style={styles.screenHeader}>
+        <View>
+          <Text style={[styles.screenHeaderSub, { color: COLORS.danger }]}>SYSTEM OVERRIDE</Text>
+          <Text style={styles.screenHeaderTitle}>God-Mode</Text>
+        </View>
+        <TouchableOpacity onPress={handleAdminLogout} style={styles.logoutBtn}>
+          <Text style={styles.logoutBtnText}>🚪 Exit</Text>
+        </TouchableOpacity>
+      </View>
+
+      {isLoading ? (
+        <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+          <ActivityIndicator size="large" color={COLORS.danger} />
+        </View>
+      ) : (
+        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}>
+           {viewMode === 'stats' && stats && (
+              <>
+                <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '800', marginBottom: 16 }}>Platform Overview</Text>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                   {renderAnalyticCard('Total Events', stats.totalEvents, '🎪', COLORS.accent1)}
+                   {renderAnalyticCard('Global Registrations', stats.totalRegistrations, '🎟️', COLORS.accent2)}
+                </View>
+                <View style={{ flexDirection: 'row', gap: 12 }}>
+                   {renderAnalyticCard('Attendance Rate', `${stats.attendanceRate}%`, '✅', '#00FF00')}
+                   {renderAnalyticCard('Q&A Engagements', stats.totalEngagement, '💬', COLORS.accent3)}
+                </View>
+              </>
+           )}
+           {viewMode === 'users' && users.map((u, i) => <View key={i}>{renderUser({item: u})}</View>)}
+           {viewMode === 'events' && events.map((e, i) => <View key={i}>{renderGlobalEvent({item: e})}</View>)}
+        </ScrollView>
+      )}
+
+      {/* Admin Tab Bar uses Bottom Nav too */}
+      <TabBar tabs={ADMIN_TABS} active={viewMode} onChange={setViewMode} />
+    </SafeAreaView>
+  );
+}
+
+// ─── Section 6: Router ────────────────────────────────────────────────
 export default function App() {
   return (
     <NavigationContainer>
@@ -1611,6 +1958,7 @@ export default function App() {
         <Stack.Screen name="Login" component={LoginScreen} />
         <Stack.Screen name="Student" component={StudentDashboard} />
         <Stack.Screen name="Organizer" component={OrganizerDashboard} />
+        <Stack.Screen name="Admin" component={AdminDashboard} />
       </Stack.Navigator>
     </NavigationContainer>
   );
