@@ -265,7 +265,7 @@ function LoginScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
-  const API_URL = 'http://10.126.236.100:3000/api';
+  const API_URL = 'http://10.57.118.100:3000/api';
 
   useEffect(() => {
     Animated.parallel([
@@ -667,8 +667,8 @@ function StudentDashboard({ route, navigation }) {
   const [newQueryMessage, setNewQueryMessage] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
-  const API_URL = 'http://10.126.236.100:3000/api';
-  const SOCKET_URL = 'http://10.126.236.100:3000';
+  const API_URL = 'http://10.57.118.100:3000/api';
+  const SOCKET_URL = 'http://10.57.118.100:3000';
 
   useEffect(() => {
     fetchNotifications();
@@ -1167,8 +1167,8 @@ function OrganizerDashboard({ route, navigation }) {
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
   const [attendeesList, setAttendeesList] = useState([]);
 
-  const API_URL = 'http://10.126.236.100:3000/api';
-  const SOCKET_URL = 'http://10.126.236.100:3000';
+  const API_URL = 'http://10.57.118.100:3000/api';
+  const SOCKET_URL = 'http://10.57.118.100:3000';
 
   useEffect(() => {
     if (viewMode === 'stats') fetchStats();
@@ -1723,7 +1723,7 @@ function AdminDashboard({ route, navigation }) {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const API_URL = 'http://10.126.236.100:3000/api';
+  const API_URL = 'http://10.57.118.100:3000/api';
 
   const ADMIN_TABS = [
     { key: 'stats', icon: '📊', label: 'Analytics' },
@@ -1846,33 +1846,45 @@ function AdminDashboard({ route, navigation }) {
   );
 
   const renderUser = ({ item }) => (
-    <GlassCard style={{ marginBottom: 12, flexDirection: 'row', alignItems: 'center' }}>
-      <InitialsAvatar name={item.name} size={48} fontSize={18} />
-      <View style={{ flex: 1, marginLeft: 12 }}>
-        <Text style={{ fontSize: 18, color: COLORS.text, fontWeight: '800' }}>{item.name}</Text>
-        <Text style={{ color: COLORS.textMuted, fontSize: 13 }}>{item.email}</Text>
-        <Text style={{ color: item.role === 'admin' ? COLORS.danger : COLORS.accent3, fontSize: 12, fontWeight: '700', marginTop: 4 }}>
-          ROLE: {item.role.toUpperCase()}
-          {item.account_status === 'pending' && <Text style={{ color: '#FFA500' }}> (PENDING)</Text>}
-        </Text>
+    <GlassCard style={{ marginBottom: 12 }}>
+      <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+        <InitialsAvatar name={item.name} size={48} fontSize={18} />
+        <View style={{ flex: 1, marginLeft: 12 }}>
+          <Text style={{ fontSize: 18, color: COLORS.text, fontWeight: '800' }}>{item.name}</Text>
+          <Text style={{ color: COLORS.textMuted, fontSize: 13 }}>{item.email}</Text>
+          <Text style={{ color: item.role === 'admin' ? COLORS.danger : COLORS.accent3, fontSize: 12, fontWeight: '700', marginTop: 4 }}>
+            ROLE: {item.role.toUpperCase()}
+            {item.account_status === 'pending' && <Text style={{ color: '#FFA500' }}> (PENDING)</Text>}
+          </Text>
+        </View>
+        {item.account_status === 'pending' && item.role === 'organizer' && (
+          <TouchableOpacity onPress={() => handleApproveUser(item.user_id, item.name)}
+             style={{ padding: 12, marginRight: 8, backgroundColor: '#00FF0030', borderRadius: 12, borderWidth: 1, borderColor: '#00FF00' }}>
+             <Text style={{ fontSize: 16 }}>✅</Text>
+          </TouchableOpacity>
+        )}
+        {item.role === 'student' && (
+          <TouchableOpacity onPress={() => handlePromoteUser(item.user_id, item.name)}
+             style={{ padding: 12, marginRight: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 }}>
+             <Text style={{ fontSize: 16 }}>⭐</Text>
+          </TouchableOpacity>
+        )}
+        {item.role !== 'admin' && (
+          <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)}
+            style={{ backgroundColor: COLORS.danger + '30', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.danger + '60' }}>
+            <Text style={{ fontSize: 16 }}>💀</Text>
+          </TouchableOpacity>
+        )}
       </View>
-      {item.account_status === 'pending' && item.role === 'organizer' && (
-        <TouchableOpacity onPress={() => handleApproveUser(item.user_id, item.name)}
-           style={{ padding: 12, marginRight: 8, backgroundColor: '#00FF0030', borderRadius: 12, borderWidth: 1, borderColor: '#00FF00' }}>
-           <Text style={{ fontSize: 16 }}>✅</Text>
-        </TouchableOpacity>
-      )}
-      {item.role === 'student' && (
-        <TouchableOpacity onPress={() => handlePromoteUser(item.user_id, item.name)}
-           style={{ padding: 12, marginRight: 8, backgroundColor: 'rgba(255,255,255,0.1)', borderRadius: 12 }}>
-           <Text style={{ fontSize: 16 }}>⭐</Text>
-        </TouchableOpacity>
-      )}
-      {item.role !== 'admin' && (
-        <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)}
-          style={{ backgroundColor: COLORS.danger + '30', padding: 12, borderRadius: 12, borderWidth: 1, borderColor: COLORS.danger + '60' }}>
-          <Text style={{ fontSize: 16 }}>💀</Text>
-        </TouchableOpacity>
+      
+      {item.role === 'organizer' && item.club_name && (
+        <View style={{ marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderColor: 'rgba(255,255,255,0.1)' }}>
+          <Text style={{ color: COLORS.accent1, fontSize: 12, fontWeight: '800', marginBottom: 4 }}>VERIFICATION DATA</Text>
+          <Text style={{ color: COLORS.text, fontSize: 13 }}>Club: <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.club_name} ({item.club_role})</Text></Text>
+          <Text style={{ color: COLORS.text, fontSize: 13 }}>Dept: <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.department} • {item.study_year}</Text></Text>
+          <Text style={{ color: COLORS.text, fontSize: 13 }}>Student ID: <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.student_id}</Text></Text>
+          <Text style={{ color: COLORS.text, fontSize: 13 }}>Phone: <Text style={{ color: '#FFF', fontWeight: 'bold' }}>{item.phone}</Text></Text>
+        </View>
       )}
     </GlassCard>
   );

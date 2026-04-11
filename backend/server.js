@@ -57,7 +57,7 @@ app.post('/api/login', (req, res) => {
     if (err) return res.status(500).json({ error: 'Database error' });
     if (results.length > 0) {
       if (results[0].account_status === 'pending') {
-         return res.json({ success: false, message: 'Your account is pending Admin approval.' });
+        return res.json({ success: false, message: 'Your account is pending Admin approval.' });
       }
       res.json({ success: true, message: `Welcome back, ${results[0].name}!`, user: results[0] });
     }
@@ -69,11 +69,11 @@ app.post('/api/login', (req, res) => {
 app.post('/api/signup', (req, res) => {
   const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year } = req.body;
   if (!name || !email || !password) return res.json({ success: false, message: 'Please provide all details.' });
-  
+
   if (role === 'organizer') {
-     if (!phone || !club_name || !club_role || !department || !student_id || !study_year) {
-         return res.json({ success: false, message: 'Organizers must strictly provide all verification details.' });
-     }
+    if (!phone || !club_name || !club_role || !department || !student_id || !study_year) {
+      return res.json({ success: false, message: 'Organizers must strictly provide all verification details.' });
+    }
   }
 
   const accountStatus = role === 'organizer' ? 'pending' : 'approved';
@@ -82,7 +82,7 @@ app.post('/api/signup', (req, res) => {
   db.query(sqlQuery, [name, email, password, role || 'student', accountStatus, phone || null, club_name || null, club_role || null, department || null, student_id || null, study_year || null], (err) => {
     if (err && err.code === 'ER_DUP_ENTRY') return res.json({ success: false, message: 'Email already exists' });
     else if (err) return res.status(500).json({ error: 'Database error' });
-    
+
     if (role === 'organizer') return res.json({ success: true, message: 'Application submitted! Waiting for Admin approval.' });
     res.json({ success: true, message: 'Account securely created!' });
   });
@@ -116,7 +116,7 @@ app.put('/api/events/:event_id', upload.single('poster'), (req, res) => {
 
   let finalImageUrl = req.body.image_url || null;
   if (req.file) {
-    finalImageUrl = `http://10.126.236.100:3000/uploads/${req.file.filename}`;
+    finalImageUrl = `http://10.57.118.100:3000/uploads/${req.file.filename}`;
   }
 
   const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ? WHERE event_id = ?';
@@ -160,8 +160,8 @@ app.post('/api/events', upload.single('poster'), (req, res) => {
   // If a physical file was uploaded from the gallery, generate the exact URL for it
   let finalImageUrl = req.body.image_url || null;
   if (req.file) {
-    // 10.126.236.100 is your laptop's IP! So the phone knows where to load the image from.
-    finalImageUrl = `http://10.126.236.100:3000/uploads/${req.file.filename}`;
+    // 10.57.118.100 is your laptop's IP! So the phone knows where to load the image from.
+    finalImageUrl = `http://10.57.118.100:3000/uploads/${req.file.filename}`;
     console.log("-> Successfully saved gallery image locally:", req.file.filename);
   }
 
@@ -420,7 +420,7 @@ app.post('/api/queries', (req, res) => {
 // NEW (PHASE 9): ADMIN ROUTES
 // ===================================================================
 app.get('/api/admin/users', (req, res) => {
-  db.query('SELECT id AS user_id, name, email, role, account_status, created_at FROM users ORDER BY created_at DESC', (err, results) => {
+  db.query('SELECT id AS user_id, name, email, role, account_status, phone, club_name, club_role, department, student_id, study_year, created_at FROM users ORDER BY created_at DESC', (err, results) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error fetching users.' });
     res.json({ success: true, users: results });
   });
@@ -436,7 +436,7 @@ app.delete('/api/admin/users/:user_id', (req, res) => {
       db.query('DELETE FROM users WHERE id = ?', [userId], (err, result) => {
         if (err) return res.status(500).json({ success: false, message: 'Database error deleting user.' });
         if (result.affectedRows === 0) return res.json({ success: false, message: 'User not found!' });
-        
+
         io.emit('new_event_alert', { message: 'A user has been permanently banned by the Admin.' });
         res.json({ success: true, message: 'User eradicated from the system!' });
       });
@@ -452,7 +452,7 @@ app.delete('/api/admin/events/:event_id', (req, res) => {
       db.query('DELETE FROM events WHERE event_id = ?', [eventId], (err, result) => {
         if (err) return res.status(500).json({ success: false, message: 'Database error deleting event.' });
         if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found!' });
-        
+
         io.emit('new_event_alert', { message: 'Admin Override: An event has been forcefully removed.' });
         res.json({ success: true, message: 'Event completely annihilated by Admin!' });
       });
@@ -468,7 +468,7 @@ app.put('/api/admin/events/:event_id/approve', (req, res) => {
   const eventId = req.params.event_id;
   db.query("UPDATE events SET status = 'approved' WHERE event_id = ?", [eventId], (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error approving event.' });
-    
+
     io.emit('new_event_alert', { message: '📣 An Organizer just launched a brand new EVENT! Check it out.' });
     res.json({ success: true, message: 'Event successfully published live!' });
   });
