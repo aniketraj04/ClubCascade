@@ -51,7 +51,6 @@ db.connect((err) => {
   console.log('✅ Successfully connected to the MySQL ClubCascade Database!');
 });
 
-});
 
 // ===================================================================
 // AUTH MIDDLEWARES
