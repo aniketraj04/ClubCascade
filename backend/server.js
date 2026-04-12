@@ -4,6 +4,8 @@ const cors = require('cors');
 const multer = require('multer'); // NEW: Handles physical file uploads
 const path = require('path');
 const fs = require('fs');
+const jwt = require('jsonwebtoken');
+const JWT_SECRET = 'supersecretkey123';
 
 const { Server } = require("socket.io"); // NEW
 const http = require("http"); // NEW
@@ -49,6 +51,37 @@ db.connect((err) => {
   console.log('✅ Successfully connected to the MySQL ClubCascade Database!');
 });
 
+});
+
+// ===================================================================
+// AUTH MIDDLEWARES
+// ===================================================================
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers['authorization'];
+  if (!authHeader) return res.status(403).json({ success: false, message: 'No token provided' });
+  
+  const token = authHeader.split(' ')[1];
+  jwt.verify(token, JWT_SECRET, (err, decoded) => {
+    if (err) return res.status(401).json({ success: false, message: 'Unauthorized access' });
+    req.user = decoded;
+    next();
+  });
+};
+
+const verifyAdmin = (req, res, next) => {
+  verifyToken(req, res, () => {
+    if (req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Requires Admin Privileges' });
+    next();
+  });
+};
+
+const verifyOrganizer = (req, res, next) => {
+  verifyToken(req, res, () => {
+    if (req.user.role !== 'organizer' && req.user.role !== 'admin') return res.status(403).json({ success: false, message: 'Requires Organizer Privileges' });
+    next();
+  });
+};
+
 // LOGIN API 
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
@@ -59,7 +92,8 @@ app.post('/api/login', (req, res) => {
       if (results[0].account_status === 'pending') {
         return res.json({ success: false, message: 'Your account is pending Admin approval.' });
       }
-      res.json({ success: true, message: `Welcome back, ${results[0].name}!`, user: results[0] });
+      const token = jwt.sign({ id: results[0].id, role: results[0].role }, JWT_SECRET, { expiresIn: '7d' });
+      res.json({ success: true, message: `Welcome back, ${results[0].name}!`, user: results[0], token });
     }
     else res.json({ success: false, message: 'Invalid email or password' });
   });
@@ -79,17 +113,20 @@ app.post('/api/signup', (req, res) => {
   const accountStatus = role === 'organizer' ? 'pending' : 'approved';
   // Use user_id since SQL complains if we try to insert null mapping for Auto Increment, wait, we are inserting into 'users' not 'user_id' but id. 
   const sqlQuery = 'INSERT INTO users (name, email, password, role, account_status, phone, club_name, club_role, department, student_id, study_year) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
-  db.query(sqlQuery, [name, email, password, role || 'student', accountStatus, phone || null, club_name || null, club_role || null, department || null, student_id || null, study_year || null], (err) => {
+  db.query(sqlQuery, [name, email, password, role || 'student', accountStatus, phone || null, club_name || null, club_role || null, department || null, student_id || null, study_year || null], (err, result) => {
     if (err && err.code === 'ER_DUP_ENTRY') return res.json({ success: false, message: 'Email already exists' });
     else if (err) return res.status(500).json({ error: 'Database error' });
 
     if (role === 'organizer') return res.json({ success: true, message: 'Application submitted! Waiting for Admin approval.' });
-    res.json({ success: true, message: 'Account securely created!' });
+    
+    // For students, generate a token immediately
+    const token = jwt.sign({ id: result.insertId, role: role || 'student' }, JWT_SECRET, { expiresIn: '7d' });
+    res.json({ success: true, message: 'Account securely created!', token });
   });
 });
 
 // FETCH EVENTS API
-app.get('/api/events', (req, res) => {
+app.get('/api/events', verifyToken, (req, res) => {
   const sqlQuery = 'SELECT * FROM events ORDER BY date ASC';
   db.query(sqlQuery, (err, results) => {
     if (err) return res.status(500).json({ error: 'Database error' });
@@ -98,7 +135,7 @@ app.get('/api/events', (req, res) => {
 });
 
 // FETCH ISOLATED ORGANIZER EVENTS API
-app.get('/api/organizers/:org_id/events', (req, res) => {
+app.get('/api/organizers/:org_id/events', verifyOrganizer, (req, res) => {
   const orgId = req.params.org_id;
   const sqlQuery = 'SELECT * FROM events WHERE organizer_id = ? ORDER BY date ASC';
   db.query(sqlQuery, [orgId], (err, results) => {
@@ -110,30 +147,53 @@ app.get('/api/organizers/:org_id/events', (req, res) => {
 // ===================================================================
 // NEW: UPDATE EVENT API (PUT)
 // ===================================================================
-app.put('/api/events/:event_id', upload.single('poster'), (req, res) => {
+app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req, res) => {
   const eventId = req.params.event_id;
-  const { title, description, venue, limit_participants, category } = req.body;
+  const { title, description, venue, limit_participants, category, date } = req.body;
 
-  let finalImageUrl = req.body.image_url || null;
-  if (req.file) {
-    finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
-  }
+  // ⚡ CONFLICT CHECK: Allow updating own event, but no overlapping with others
+  db.query('SELECT event_id, title FROM events WHERE date = ? AND event_id != ?', [date, eventId], (err, conflicts) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB error checking conflicts.' });
+    if (conflicts.length > 0) {
+      return res.json({
+        success: false,
+        message: `⚠️ Time conflict! "${conflicts[0].title}" is already scheduled at this exact time.`
+      });
+    }
 
-  const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ? WHERE event_id = ?';
-  db.query(sqlQuery, [title, description, venue, limit_participants, category, finalImageUrl, eventId], (err, result) => {
-    if (err) return res.status(500).json({ success: false, message: 'Database error while updating event.' });
-    if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found.' });
+    let finalImageUrl = req.body.image_url || null;
+    if (req.file) {
+      finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+    }
 
-    // Broadcast edit natively
-    io.emit('new_event_alert', { message: `Important: The event "${title}" has been recently updated by the Organizer!` });
-    res.json({ success: true, message: 'Event flawlessly updated!' });
+    const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ?, date = ? WHERE event_id = ?';
+    db.query(sqlQuery, [title, description, venue, limit_participants, category, finalImageUrl, date, eventId], (err, result) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error while updating event.' });
+      if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found.' });
+
+      // Identify all students specifically registered for THIS event to notify them
+      db.query('SELECT DISTINCT user_id FROM registrations WHERE event_id = ?', [eventId], (err2, registrants) => {
+        const msg = `📣 [${title}] Event details (Time/Venue) have been updated by the Organizer!`;
+        
+        io.emit('new_event_alert', { message: msg }); // Global visual blip
+
+        if (!err2 && registrants.length > 0) {
+          const insertValues = registrants.map(r => [r.user_id, msg]);
+          db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], () => {
+             res.json({ success: true, message: 'Event updated & Attendees notified! ✨' });
+          });
+        } else {
+           res.json({ success: true, message: 'Event flawlessly updated!' });
+        }
+      });
+    });
   });
 });
 
 // ===================================================================
 // NEW: DELETE EVENT API
 // ===================================================================
-app.delete('/api/events/:event_id', (req, res) => {
+app.delete('/api/events/:event_id', verifyOrganizer, (req, res) => {
   const eventId = req.params.event_id;
 
   // Manually delete foreign keys first to ensure older systems without ON DELETE CASCADE don't violently crash!
@@ -152,7 +212,7 @@ app.delete('/api/events/:event_id', (req, res) => {
 });
 // ===================================================================
 
-app.post('/api/events', upload.single('poster'), (req, res) => {
+app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => {
   const { title, description, date, venue, club_id, limit_participants, category, organizer_id } = req.body;
 
   console.log("-> Processing new categorized event:", title);
@@ -205,7 +265,7 @@ app.post('/api/events', upload.single('poster'), (req, res) => {
 // ===================================================================
 // NEW: REGISTER FOR EVENT API (For Students)
 // ===================================================================
-app.post('/api/register', (req, res) => {
+app.post('/api/register', verifyToken, (req, res) => {
   const { user_id, event_id } = req.body;
   if (!user_id || !event_id) return res.json({ success: false, message: 'Missing user or event ID' });
 
@@ -238,7 +298,7 @@ app.post('/api/register', (req, res) => {
 // ===================================================================
 // NEW: CANCEL REGISTRATION API
 // ===================================================================
-app.delete('/api/cancel-registration/:registration_id', (req, res) => {
+app.delete('/api/cancel-registration/:registration_id', verifyToken, (req, res) => {
   const regId = req.params.registration_id;
 
   db.query('DELETE FROM registrations WHERE registration_id = ?', [regId], (err, result) => {
@@ -249,24 +309,11 @@ app.delete('/api/cancel-registration/:registration_id', (req, res) => {
 });
 // ===================================================================
 
-// ===================================================================
-// NEW: CANCEL REGISTRATION API
-// ===================================================================
-app.delete('/api/cancel-registration/:registration_id', (req, res) => {
-  const regId = req.params.registration_id;
-
-  db.query('DELETE FROM registrations WHERE registration_id = ?', [regId], (err, result) => {
-    if (err) return res.status(500).json({ success: false, message: 'Database error while cancelling.' });
-    if (result.affectedRows === 0) return res.json({ success: false, message: 'Ticket not found!' });
-    res.json({ success: true, message: 'Ticket successfully withdrawn! We have freed up your slot.' });
-  });
-});
-// ===================================================================
 
 // ===================================================================
 // NEW: FETCH STUDENT'S TICKETS API (For QR Codes)
 // ===================================================================
-app.get('/api/tickets/:user_id', (req, res) => {
+app.get('/api/tickets/:user_id', verifyToken, (req, res) => {
   const userId = req.params.user_id;
 
   const sqlQuery = `
@@ -287,7 +334,7 @@ app.get('/api/tickets/:user_id', (req, res) => {
 // ===================================================================
 // NEW: SCAN QR TICKET API (For Organizers)
 // ===================================================================
-app.post('/api/checkin', (req, res) => {
+app.post('/api/checkin', verifyOrganizer, (req, res) => {
   const { registration_id } = req.body;
 
   // We simply flip the `attended` switch from FALSE to TRUE!
@@ -310,7 +357,7 @@ app.post('/api/checkin', (req, res) => {
 // ===================================================================
 // NEW: LIVE EVENT STATS API (For Organizers)
 // ===================================================================
-app.get('/api/stats', (req, res) => {
+app.get('/api/stats', verifyOrganizer, (req, res) => {
   // We use "LEFT JOIN" and "GROUP BY" to count exactly how many students registered, and calculate how many had their QR code scanned!
   const sqlQuery = `
     SELECT e.event_id, e.title, e.limit_participants,
@@ -332,7 +379,7 @@ app.get('/api/stats', (req, res) => {
 // ===================================================================
 // NEW: FETCH ACTUAL NAMES AND EMAILS OF ATTENDEES (For Teachers)
 // ===================================================================
-app.get('/api/attendees/:event_id', (req, res) => {
+app.get('/api/attendees/:event_id', verifyOrganizer, (req, res) => {
   const eventId = req.params.event_id;
 
   // We JOIN the Users table with Registrations to pull their real identity!
@@ -354,7 +401,7 @@ app.get('/api/attendees/:event_id', (req, res) => {
 // ===================================================================
 // NEW: FETCH NOTIFICATIONS API (For Students)
 // ===================================================================
-app.get('/api/notifications/:user_id', (req, res) => {
+app.get('/api/notifications/:user_id', verifyToken, (req, res) => {
   const userId = req.params.user_id;
 
   const sqlQuery = `
@@ -373,7 +420,7 @@ app.get('/api/notifications/:user_id', (req, res) => {
 // ===================================================================
 // NEW: MARK NOTIFICATION AS READ API
 // ===================================================================
-app.post('/api/notifications/read/:id', (req, res) => {
+app.post('/api/notifications/read/:id', verifyToken, (req, res) => {
   const notificationId = req.params.id;
 
   const sqlQuery = 'UPDATE notifications SET is_read = TRUE WHERE notification_id = ?';
@@ -394,7 +441,7 @@ io.on("connection", (socket) => {
 // ===================================================================
 // NEW: FETCH Q&A BOARD FOR AN EVENT API
 // ===================================================================
-app.get('/api/queries/:event_id', (req, res) => {
+app.get('/api/queries/:event_id', verifyToken, (req, res) => {
   const eventId = req.params.event_id;
 
   db.query('SELECT * FROM event_queries WHERE event_id = ? ORDER BY created_at ASC', [eventId], (err, results) => {
@@ -407,7 +454,7 @@ app.get('/api/queries/:event_id', (req, res) => {
 // ===================================================================
 // NEW: POST A NEW Q&A CHAT MESSAGE API
 // ===================================================================
-app.post('/api/queries', (req, res) => {
+app.post('/api/queries', verifyToken, (req, res) => {
   const { event_id, user_id, user_name, message } = req.body;
   if (!message) return res.json({ success: false, message: 'Message cannot be empty.' });
 
@@ -427,7 +474,7 @@ app.post('/api/queries', (req, res) => {
 // ===================================================================
 // BROADCAST BLAST API (Organizer -> All Registrants)
 // ===================================================================
-app.post('/api/events/:event_id/broadcast', (req, res) => {
+app.post('/api/events/:event_id/broadcast', verifyOrganizer, (req, res) => {
   const eventId = req.params.event_id;
   const { message, eventTitle } = req.body;
   if (!message) return res.json({ success: false, message: 'Message cannot be empty.' });
@@ -460,7 +507,7 @@ app.post('/api/events/:event_id/broadcast', (req, res) => {
 // ===================================================================
 
 // Toggle save/unsave an event
-app.post('/api/wishlist/toggle', (req, res) => {
+app.post('/api/wishlist/toggle', verifyToken, (req, res) => {
   const { user_id, event_id } = req.body;
   db.query('SELECT * FROM saved_events WHERE user_id = ? AND event_id = ?', [user_id, event_id], (err, results) => {
     if (err) return res.status(500).json({ success: false, message: 'DB error' });
@@ -481,7 +528,7 @@ app.post('/api/wishlist/toggle', (req, res) => {
 });
 
 // Get user's saved event IDs (for highlighting bookmarks)
-app.get('/api/wishlist/:user_id', (req, res) => {
+app.get('/api/wishlist/:user_id', verifyToken, (req, res) => {
   const userId = req.params.user_id;
   db.query('SELECT event_id FROM saved_events WHERE user_id = ?', [userId], (err, results) => {
     if (err) return res.status(500).json({ success: false });
@@ -490,7 +537,7 @@ app.get('/api/wishlist/:user_id', (req, res) => {
 });
 
 // Get full saved event details for profile page
-app.get('/api/wishlist/:user_id/events', (req, res) => {
+app.get('/api/wishlist/:user_id/events', verifyToken, (req, res) => {
   const userId = req.params.user_id;
   const sql = `SELECT e.* FROM events e 
                INNER JOIN saved_events se ON e.event_id = se.event_id 
@@ -505,14 +552,14 @@ app.get('/api/wishlist/:user_id/events', (req, res) => {
 // ===================================================================
 // NEW (PHASE 9): ADMIN ROUTES
 // ===================================================================
-app.get('/api/admin/users', (req, res) => {
+app.get('/api/admin/users', verifyAdmin, (req, res) => {
   db.query('SELECT id AS user_id, name, email, role, account_status, phone, club_name, club_role, department, student_id, study_year, created_at FROM users ORDER BY created_at DESC', (err, results) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error fetching users.' });
     res.json({ success: true, users: results });
   });
 });
 
-app.delete('/api/admin/users/:user_id', (req, res) => {
+app.delete('/api/admin/users/:user_id', verifyAdmin, (req, res) => {
   const userId = req.params.user_id;
 
   // We must cascade delete registrations and queries manually if needed, or let DB handle if ON DELETE CASCADE is set
@@ -530,7 +577,7 @@ app.delete('/api/admin/users/:user_id', (req, res) => {
   });
 });
 
-app.delete('/api/admin/events/:event_id', (req, res) => {
+app.delete('/api/admin/events/:event_id', verifyAdmin, (req, res) => {
   const eventId = req.params.event_id;
 
   db.query('DELETE FROM registrations WHERE event_id = ?', [eventId], () => {
@@ -550,7 +597,7 @@ app.delete('/api/admin/events/:event_id', (req, res) => {
 // NEW (PHASE 9.5): ADVANCED ADMIN LOGIC
 // ===================================================================
 
-app.put('/api/admin/events/:event_id/approve', (req, res) => {
+app.put('/api/admin/events/:event_id/approve', verifyAdmin, (req, res) => {
   const eventId = req.params.event_id;
   db.query("UPDATE events SET status = 'approved' WHERE event_id = ?", [eventId], (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error approving event.' });
@@ -560,7 +607,7 @@ app.put('/api/admin/events/:event_id/approve', (req, res) => {
   });
 });
 
-app.put('/api/admin/users/:user_id/approve', (req, res) => {
+app.put('/api/admin/users/:user_id/approve', verifyAdmin, (req, res) => {
   const userId = req.params.user_id;
   db.query("UPDATE users SET account_status = 'approved' WHERE id = ?", [userId], (err) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error approving user.' });
@@ -568,7 +615,7 @@ app.put('/api/admin/users/:user_id/approve', (req, res) => {
   });
 });
 
-app.put('/api/admin/users/:user_id/role', (req, res) => {
+app.put('/api/admin/users/:user_id/role', verifyAdmin, (req, res) => {
   const userId = req.params.user_id;
   db.query("UPDATE users SET role = 'organizer' WHERE id = ?", [userId], (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error assigning role.' });
@@ -576,7 +623,7 @@ app.put('/api/admin/users/:user_id/role', (req, res) => {
   });
 });
 
-app.get('/api/admin/stats', (req, res) => {
+app.get('/api/admin/stats', verifyAdmin, (req, res) => {
   const stats = {};
   db.query("SELECT COUNT(*) AS totalEvents FROM events", (err, eRes) => {
     if (!err) stats.totalEvents = eRes[0].totalEvents;

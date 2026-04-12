@@ -1,8 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity, Alert,
   ScrollView, ActivityIndicator, Image, FlatList, Modal, SafeAreaView,
-  Animated, Dimensions, StatusBar, Platform, Share
+  Animated, Dimensions, StatusBar, Platform, Share, RefreshControl
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -17,6 +17,18 @@ import { LinearGradient } from 'expo-linear-gradient';
 
 const Stack = createNativeStackNavigator();
 const { width: SCREEN_W } = Dimensions.get('window');
+
+// ── JWT Fetch Interceptor ──
+const originalFetch = global.fetch;
+global.fetch = async (url, options = {}) => {
+  if (typeof url === 'string' && url.includes('10.191.188.100') && global.jwtToken) {
+    options.headers = {
+      ...(options.headers || {}),
+      'Authorization': 'Bearer ' + global.jwtToken
+    };
+  }
+  return originalFetch(url, options);
+};
 
 // ─── Design Tokens ───────────────────────────────────────────────────
 const COLORS = {
@@ -303,6 +315,7 @@ function LoginScreen({ navigation }) {
       });
       const data = await response.json();
       if (data.success) {
+        if (data.token) global.jwtToken = data.token;
         if (isLoginMode) {
           if (data.user.role === 'student')
             navigation.replace('Student', { userName: data.user.name, userId: data.user.id });
@@ -808,6 +821,32 @@ function StudentDashboard({ route, navigation }) {
   const [savedEventIds, setSavedEventIds] = useState([]);
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
   const [selectedCalDate, setSelectedCalDate] = useState(null);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [expandedAlertGroup, setExpandedAlertGroup] = useState(null);
+
+  const groupedNotifications = useMemo(() => {
+    const groups = {};
+    const extractName = (msg) => {
+      let match = msg.match(/^📣 \[(.*?)\]/);
+      if (match) return match[1];
+      match = msg.match(/^🔔 New Event Alert: (.*?) is happening/);
+      if (match) return match[1];
+      return 'General Alerts';
+    };
+
+    notifications.forEach(notif => {
+      const gName = extractName(notif.message);
+      if (!groups[gName]) {
+        groups[gName] = { eventName: gName, items: [], hasUnread: false, latestDate: new Date(0) };
+      }
+      groups[gName].items.push(notif);
+      if (!notif.is_read) groups[gName].hasUnread = true;
+      const d = new Date(notif.created_at);
+      if (d > groups[gName].latestDate) groups[gName].latestDate = d;
+    });
+
+    return Object.values(groups).sort((a,b) => b.latestDate - a.latestDate);
+  }, [notifications]);
 
   const [isDetailsModalVisible, setIsDetailsModalVisible] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -840,6 +879,12 @@ function StudentDashboard({ route, navigation }) {
 
   // Always keep tickets fresh so profile badges are accurate
   useEffect(() => { fetchMyTickets(); fetchWishlist(); }, []);
+
+  const onRefresh = async () => {
+    setIsRefreshing(true);
+    await Promise.all([fetchEvents(), fetchMyTickets(), fetchNotifications(), fetchWishlist()]);
+    setIsRefreshing(false);
+  };
 
   const fetchNotifications = async () => {
     try {
@@ -1104,23 +1149,49 @@ function StudentDashboard({ route, navigation }) {
     );
   };
 
-  // ── Render: Alert Card ──
-  const renderAlert = ({ item }) => (
-    <TouchableOpacity
-      onPress={() => handleMarkAsRead(item.notification_id)}
-      style={[styles.alertCard, !item.is_read && styles.alertCardUnread]}
-      activeOpacity={0.8}>
-      {!item.is_read && <LinearGradient colors={[COLORS.accent2, COLORS.accent1]}
-        style={styles.alertUnreadBar} />}
-      <View style={{ flex: 1, paddingLeft: !item.is_read ? 12 : 0 }}>
-        <Text style={styles.alertText}>{item.message}</Text>
-        <Text style={styles.alertDate}>
-          {new Date(item.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}
-        </Text>
+  // ── Render: Alert Group Card ──
+  const renderAlertGroup = ({ item }) => {
+    const isExpanded = expandedAlertGroup === item.eventName;
+    return (
+      <View style={{ marginBottom: 12 }}>
+        <TouchableOpacity
+          onPress={() => setExpandedAlertGroup(isExpanded ? null : item.eventName)}
+          style={[styles.alertCard, item.hasUnread && styles.alertCardUnread, { marginBottom: 0 }]}
+          activeOpacity={0.8}>
+          {item.hasUnread && <LinearGradient colors={[COLORS.accent2, COLORS.accent1]} style={styles.alertUnreadBar} />}
+          <View style={{ flex: 1, paddingLeft: item.hasUnread ? 12 : 0 }}>
+            <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '700' }}>{item.eventName}</Text>
+            <Text style={{ color: COLORS.textSub, fontSize: 13, marginTop: 4 }}>
+              {item.items.length} update{item.items.length !== 1 ? 's' : ''}
+            </Text>
+          </View>
+          <Text style={{ color: COLORS.textMuted, fontSize: 20 }}>{isExpanded ? '⌃' : '⌄'}</Text>
+        </TouchableOpacity>
+
+        {isExpanded && (
+          <View style={{ paddingLeft: 16, marginTop: 8 }}>
+             {item.items.map((notif, idx) => {
+                const cleanMsg = notif.message
+                  .replace(/^📣 \[.*?\] /, '')
+                  .replace(/^🔔 New Event Alert: .*? is happening at (.*?)!/, 'Now happening at $1!');
+                
+                return (
+                  <TouchableOpacity key={notif.notification_id} onPress={() => handleMarkAsRead(notif.notification_id)}
+                    style={{ paddingVertical: 10, borderBottomWidth: idx < item.items.length - 1 ? 1 : 0, borderColor: 'rgba(255,255,255,0.05)' }}>
+                     <Text style={[styles.alertText, { opacity: notif.is_read ? 0.6 : 1, fontSize: 14 }]}>
+                        {cleanMsg}  {!notif.is_read && <Text style={{color: COLORS.accent1}}> • New</Text>}
+                     </Text>
+                     <Text style={{ color: COLORS.textMuted, fontSize: 11, marginTop: 4 }}>
+                        {new Date(notif.created_at).toLocaleString([], { dateStyle: 'short', timeStyle: 'short'})}
+                     </Text>
+                  </TouchableOpacity>
+                );
+             })}
+          </View>
+        )}
       </View>
-      {!item.is_read && <View style={styles.unreadDot} />}
-    </TouchableOpacity>
-  );
+    );
+  };
 
   // ── Tab definitions (Profile tab added, no logout button anywhere else) ──
   const STUDENT_TABS = [
@@ -1218,7 +1289,7 @@ function StudentDashboard({ route, navigation }) {
 
       {/* ── List content ── */}
       {viewMode !== 'profile' && (
-        isLoading
+        isLoading && !isRefreshing
           ? (
             <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
               <ActivityIndicator size="large" color={COLORS.accent1} />
@@ -1230,20 +1301,28 @@ function StudentDashboard({ route, navigation }) {
               data={
                 viewMode === 'events' ? filteredEvents :
                   viewMode === 'tickets' ? myTickets.filter(t => !t.attended) :
-                    notifications
+                    groupedNotifications
               }
               keyExtractor={item =>
                 viewMode === 'events' ? item.event_id.toString() :
                   viewMode === 'tickets' ? item.registration_id.toString() :
-                    item.notification_id.toString()
+                    item.eventName
               }
               renderItem={
                 viewMode === 'events' ? renderEvent :
                   viewMode === 'tickets' ? renderTicket :
-                    renderAlert
+                    renderAlertGroup
               }
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
               showsVerticalScrollIndicator={false}
+              refreshControl={
+                <RefreshControl
+                  refreshing={isRefreshing}
+                  onRefresh={onRefresh}
+                  tintColor={COLORS.accent1}
+                  colors={[COLORS.accent1, COLORS.accent2]}
+                />
+              }
               ListEmptyComponent={
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 56, marginBottom: 16 }}>
@@ -1394,6 +1473,9 @@ function OrganizerDashboard({ route, navigation }) {
   const [editLimit, setEditLimit] = useState('');
   const [editCategory, setEditCategory] = useState('');
   const [editImageUri, setEditImageUri] = useState(null);
+  const [editDate, setEditDate] = useState(new Date());
+  const [showEditDatePicker, setShowEditDatePicker] = useState(false);
+  const [showEditTimePicker, setShowEditTimePicker] = useState(false);
   const [isAttendeesVisible, setIsAttendeesVisible] = useState(false);
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
   const [attendeesList, setAttendeesList] = useState([]);
@@ -1476,6 +1558,7 @@ function OrganizerDashboard({ route, navigation }) {
     setEditLimit(event.limit_participants.toString());
     setEditCategory(event.category || 'General');
     setEditImageUri(event.image_url);
+    if (event.date) setEditDate(new Date(event.date));
     setIsEditModalVisible(true);
   };
 
@@ -1492,6 +1575,16 @@ function OrganizerDashboard({ route, navigation }) {
       } else {
         formData.append('image_url', editImageUri || '');
       }
+
+      // Convert editDate to MySQL DATETIME literal format (YYYY-MM-DD HH:MM:SS)
+      // Note: toISOString() handles zero-padding correctly.
+      const formattedDate = editDate.getFullYear() + '-' +
+        String(editDate.getMonth() + 1).padStart(2, '0') + '-' +
+        String(editDate.getDate()).padStart(2, '0') + ' ' +
+        String(editDate.getHours()).padStart(2, '0') + ':' +
+        String(editDate.getMinutes()).padStart(2, '0') + ':00';
+        
+      formData.append('date', formattedDate);
       const r = await fetch(`${API_URL}/events/${currentEventObj.event_id}`, { method: 'PUT', body: formData });
       const d = await r.json();
       if (d.success) {
@@ -1831,7 +1924,17 @@ function OrganizerDashboard({ route, navigation }) {
 
       {/* ── MANAGE ── */}
       {viewMode === 'manage' && (
-        <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+        <ScrollView
+          contentContainerStyle={{ padding: 20, paddingBottom: 60 }}
+          showsVerticalScrollIndicator={false}
+          refreshControl={
+            <RefreshControl
+              refreshing={false}
+              onRefresh={fetchOrganizerEvents}
+              tintColor={COLORS.accent3}
+              colors={[COLORS.accent3]}
+            />
+          }>
           <Text style={styles.sectionTitle}>Command Center 🎛️</Text>
           {manageEvents.length === 0
             ? <ActivityIndicator size="large" color={COLORS.accent1} style={{ marginTop: 40 }} />
@@ -1926,6 +2029,38 @@ function OrganizerDashboard({ route, navigation }) {
                 )
               }
             </TouchableOpacity>
+
+            <Text style={styles.labelText}>Date & Time</Text>
+            <TouchableOpacity style={styles.dateBtn} onPress={() => setShowEditDatePicker(true)}>
+              <Text style={styles.dateBtnText}>
+                {editDate.toLocaleDateString([], { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+              </Text>
+            </TouchableOpacity>
+
+            <TouchableOpacity style={styles.dateBtn} onPress={() => setShowEditTimePicker(true)}>
+              <Text style={styles.dateBtnText}>
+                {editDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+              </Text>
+            </TouchableOpacity>
+
+            {showEditDatePicker && (
+              <DateTimePicker
+                value={editDate}
+                mode="date"
+                display="default"
+                themeVariant="dark"
+                onChange={(e, d) => { setShowEditDatePicker(false); if (d) setEditDate(d); }}
+              />
+            )}
+            {showEditTimePicker && (
+              <DateTimePicker
+                value={editDate}
+                mode="time"
+                display="default"
+                themeVariant="dark"
+                onChange={(e, d) => { setShowEditTimePicker(false); if (d) setEditDate(d); }}
+              />
+            )}
 
             <GradientButton onPress={executeUpdate} label="Save Changes ✓"
               colors={GRAD_GREEN} style={{ marginTop: 20 }} />
@@ -2200,7 +2335,16 @@ function AdminDashboard({ route, navigation }) {
           <ActivityIndicator size="large" color={COLORS.danger} />
         </View>
       ) : (
-        <ScrollView contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}>
+        <ScrollView
+          contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100 }}
+          refreshControl={
+            <RefreshControl
+              refreshing={isLoading}
+              onRefresh={() => { fetchUsers(); fetchEvents(); fetchStats(); }}
+              tintColor={COLORS.danger}
+              colors={[COLORS.danger]}
+            />
+          }>
            {viewMode === 'stats' && stats && (
               <>
                 <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '800', marginBottom: 16 }}>Platform Overview</Text>
