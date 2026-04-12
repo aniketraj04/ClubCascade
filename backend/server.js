@@ -116,7 +116,7 @@ app.put('/api/events/:event_id', upload.single('poster'), (req, res) => {
 
   let finalImageUrl = req.body.image_url || null;
   if (req.file) {
-    finalImageUrl = `http://10.57.118.100:3000/uploads/${req.file.filename}`;
+    finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
   }
 
   const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ? WHERE event_id = ?';
@@ -157,42 +157,50 @@ app.post('/api/events', upload.single('poster'), (req, res) => {
 
   console.log("-> Processing new categorized event:", title);
 
-  // If a physical file was uploaded from the gallery, generate the exact URL for it
-  let finalImageUrl = req.body.image_url || null;
-  if (req.file) {
-    // 10.57.118.100 is your laptop's IP! So the phone knows where to load the image from.
-    finalImageUrl = `http://10.57.118.100:3000/uploads/${req.file.filename}`;
-    console.log("-> Successfully saved gallery image locally:", req.file.filename);
-  }
-
-  const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-  const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', organizer_id || null];
-
-  db.query(sqlQuery, values, (err, result) => {
-    if (err) return res.status(500).json({ success: false, message: 'Database refused to save: ' + err.message });
-
-
-
-    // NEW: Phase 5 - Broadcast Notifications!
-    const msg = `🔔 New Event Alert: ${title} is happening at ${venue}!`;
-
-    db.query('SELECT id FROM users WHERE role = "student"', (err, students) => {
-      if (err || students.length === 0) {
-        return res.json({ success: true, message: 'Event successfully published! (No students to notify)' });
-      }
-
-      // Bulk insert a notification row for every single student
-      const insertValues = students.map(s => [s.id, msg]);
-      db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], (err) => {
-        if (err) console.error("Notification broadcast error", err);
-
-        // Broadcast the live websocket signal!
-        io.emit('new_event_alert', { title, message: msg });
-        res.json({ success: true, message: 'Event published & Students Notified!' });
+  // ⚡ CONFLICT CHECK: No two events at the exact same date & time
+  db.query('SELECT event_id, title FROM events WHERE date = ?', [date], (err, conflicts) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB error checking conflicts.' });
+    if (conflicts.length > 0) {
+      return res.json({
+        success: false,
+        message: `⚠️ Time conflict! "${conflicts[0].title}" is already scheduled at this exact time. Please choose a different time slot.`
       });
-    });
-  });
-});
+    }
+
+    // If a physical file was uploaded from the gallery, generate the exact URL for it
+    let finalImageUrl = req.body.image_url || null;
+    if (req.file) {
+      finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+      console.log("-> Successfully saved gallery image locally:", req.file.filename);
+    }
+
+    const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+    const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', organizer_id || null];
+
+    db.query(sqlQuery, values, (err, result) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database refused to save: ' + err.message });
+
+      // NEW: Phase 5 - Broadcast Notifications!
+      const msg = `🔔 New Event Alert: ${title} is happening at ${venue}!`;
+
+      db.query('SELECT id FROM users WHERE role = "student"', (err, students) => {
+        if (err || students.length === 0) {
+          return res.json({ success: true, message: 'Event successfully published! (No students to notify)' });
+        }
+
+        // Bulk insert a notification row for every single student
+        const insertValues = students.map(s => [s.id, msg]);
+        db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], (err) => {
+          if (err) console.error("Notification broadcast error", err);
+
+          // Broadcast the live websocket signal!
+          io.emit('new_event_alert', { title, message: msg });
+          res.json({ success: true, message: 'Event published & Students Notified!' });
+        });
+      });
+    }); // end INSERT events
+  }); // end conflict check
+}); // end POST /api/events
 
 // ===================================================================
 // NEW: REGISTER FOR EVENT API (For Students)
@@ -413,6 +421,84 @@ app.post('/api/queries', (req, res) => {
       res.json({ success: true, message: 'Message securely sent!' });
     }
   );
+});
+// ===================================================================
+
+// ===================================================================
+// BROADCAST BLAST API (Organizer -> All Registrants)
+// ===================================================================
+app.post('/api/events/:event_id/broadcast', (req, res) => {
+  const eventId = req.params.event_id;
+  const { message, eventTitle } = req.body;
+  if (!message) return res.json({ success: false, message: 'Message cannot be empty.' });
+
+  // Fetch all users registered for this event
+  db.query(
+    'SELECT DISTINCT r.user_id FROM registrations r WHERE r.event_id = ?',
+    [eventId],
+    (err, registrants) => {
+      if (err) return res.status(500).json({ success: false, message: 'DB error fetching registrants.' });
+      if (registrants.length === 0) return res.json({ success: false, message: 'No registrants for this event.' });
+
+      const fullMsg = `📣 [${eventTitle}] ${message}`;
+      const insertValues = registrants.map(r => [r.user_id, fullMsg]);
+
+      db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], (err2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'DB error sending notifications.' });
+        
+        // Broadcast via WebSocket so online students see it in real-time!
+        io.emit('new_event_alert', { message: fullMsg });
+        res.json({ success: true, message: `Blast sent to ${registrants.length} registrant(s)!` });
+      });
+    }
+  );
+});
+// ===================================================================
+
+// ===================================================================
+// WISHLIST / SAVED EVENTS APIS
+// ===================================================================
+
+// Toggle save/unsave an event
+app.post('/api/wishlist/toggle', (req, res) => {
+  const { user_id, event_id } = req.body;
+  db.query('SELECT * FROM saved_events WHERE user_id = ? AND event_id = ?', [user_id, event_id], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB error' });
+    if (results.length > 0) {
+      // Already saved -> unsave
+      db.query('DELETE FROM saved_events WHERE user_id = ? AND event_id = ?', [user_id, event_id], (err2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'DB error removing' });
+        res.json({ success: true, saved: false, message: 'Removed from wishlist' });
+      });
+    } else {
+      // Not saved -> save
+      db.query('INSERT INTO saved_events (user_id, event_id) VALUES (?, ?)', [user_id, event_id], (err2) => {
+        if (err2) return res.status(500).json({ success: false, message: 'DB error saving' });
+        res.json({ success: true, saved: true, message: 'Added to wishlist!' });
+      });
+    }
+  });
+});
+
+// Get user's saved event IDs (for highlighting bookmarks)
+app.get('/api/wishlist/:user_id', (req, res) => {
+  const userId = req.params.user_id;
+  db.query('SELECT event_id FROM saved_events WHERE user_id = ?', [userId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, saved_ids: results.map(r => r.event_id) });
+  });
+});
+
+// Get full saved event details for profile page
+app.get('/api/wishlist/:user_id/events', (req, res) => {
+  const userId = req.params.user_id;
+  const sql = `SELECT e.* FROM events e 
+               INNER JOIN saved_events se ON e.event_id = se.event_id 
+               WHERE se.user_id = ? ORDER BY se.saved_at DESC`;
+  db.query(sql, [userId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, events: results });
+  });
 });
 // ===================================================================
 

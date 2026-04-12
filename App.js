@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity, Alert,
   ScrollView, ActivityIndicator, Image, FlatList, Modal, SafeAreaView,
-  Animated, Dimensions, StatusBar, Platform
+  Animated, Dimensions, StatusBar, Platform, Share
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
@@ -265,7 +265,7 @@ function LoginScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(40)).current;
-  const API_URL = 'http://10.57.118.100:3000/api';
+  const API_URL = 'http://10.191.188.100:3000/api';
 
   useEffect(() => {
     Animated.parallel([
@@ -460,8 +460,21 @@ function LoginScreen({ navigation }) {
 }
 
 // ─── Section 2: PROFILE SCREEN ────────────────────────────────────────
-function ProfileScreen({ userName, userId, tickets, navigation }) {
+function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggleWishlist, navigation }) {
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isWishlistOpen, setIsWishlistOpen] = useState(false);
+  const [wishlistEvents, setWishlistEvents] = useState([]);
+  const API_URL = 'http://10.191.188.100:3000/api';
+
+  useEffect(() => {
+    if (userId) {
+      fetch(`${API_URL}/wishlist/${userId}/events`)
+        .then(r => r.json())
+        .then(d => { if (d.success) setWishlistEvents(d.events); })
+        .catch(() => {});
+    }
+  }, [userId, savedEventIds.length]);
+
   const attendedTickets = tickets.filter(t => t.attended === 1);
   const pastTickets = tickets.filter(t => t.attended === 1 || new Date(t.date) < new Date()).sort((a,b) => new Date(b.date) - new Date(a.date));
   const upcomingTickets = tickets.filter(t => t.attended !== 1 && new Date(t.date) > new Date());
@@ -577,6 +590,40 @@ function ProfileScreen({ userName, userId, tickets, navigation }) {
         </View>
       </View>
 
+      {/* ── Wishlist / Saved Events ── */}
+      <View style={styles.profileSection}>
+        <TouchableOpacity
+          onPress={() => setIsWishlistOpen(!isWishlistOpen)}
+          style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+          <Text style={[styles.profileSectionTitle, { marginBottom: 0 }]}>🔖 SAVED EVENTS</Text>
+          <Text style={{ color: COLORS.accent2, fontSize: 16, fontWeight: '600' }}>{isWishlistOpen ? 'Hide' : `Show (${wishlistEvents.length})`}</Text>
+        </TouchableOpacity>
+
+        {isWishlistOpen && (
+          wishlistEvents.length === 0 ? (
+            <Text style={{ color: COLORS.textMuted, fontSize: 14, textAlign: 'center', paddingVertical: 12 }}>No saved events yet. Tap 🏷️ on any event to bookmark it!</Text>
+          ) : (
+            wishlistEvents.map((e, idx) => (
+              <GlassCard key={idx} style={{ marginBottom: 10, padding: 14 }}>
+                <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={{ color: COLORS.text, fontSize: 15, fontWeight: '700' }}>{e.title}</Text>
+                    <Text style={{ color: COLORS.textMuted, fontSize: 13, marginTop: 4 }}>
+                      📅 {new Date(e.date).toLocaleDateString()} • 📍 {e.venue}
+                    </Text>
+                  </View>
+                  <TouchableOpacity
+                    onPress={() => onToggleWishlist && onToggleWishlist(e.event_id)}
+                    style={{ padding: 8, borderRadius: 16, backgroundColor: COLORS.danger + '20' }}>
+                    <Text style={{ fontSize: 16 }}>🗑️</Text>
+                  </TouchableOpacity>
+                </View>
+              </GlassCard>
+            ))
+          )
+        )}
+      </View>
+
       {/* ── Event History ── */}
       {pastTickets.length > 0 && (
         <View style={styles.profileSection}>
@@ -650,6 +697,104 @@ function ProfileScreen({ userName, userId, tickets, navigation }) {
   );
 }
 
+// ─── Calendar Mini View ──────────────────────────────────────────────
+const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+const DAY_LABELS = ['S','M','T','W','T','F','S'];
+
+function CalendarMiniView({ events, selectedDate, onSelectDate }) {
+  const [displayMonth, setDisplayMonth] = useState(new Date());
+
+  const year = displayMonth.getFullYear();
+  const month = displayMonth.getMonth();
+  const firstDay = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+
+  // Map each day to its event categories for colored dots
+  const dayEventMap = {};
+  events.forEach(e => {
+    const d = new Date(e.date);
+    if (d.getFullYear() === year && d.getMonth() === month) {
+      const day = d.getDate();
+      if (!dayEventMap[day]) dayEventMap[day] = [];
+      dayEventMap[day].push(e.category || 'General');
+    }
+  });
+
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  const today = new Date();
+  const isToday = (d) => d === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+  const isSelected = (d) => d && selectedDate &&
+    selectedDate.getDate() === d && selectedDate.getMonth() === month && selectedDate.getFullYear() === year;
+
+  const getCategoryColor = (cat) => {
+    const found = CATEGORIES.find(c => c.label === cat);
+    return found ? found.color : COLORS.accent1;
+  };
+
+  return (
+    <View style={{ marginHorizontal: 20, marginBottom: 12, backgroundColor: COLORS.bgCard, borderRadius: 16, padding: 14, borderWidth: 1, borderColor: 'rgba(255,255,255,0.07)' }}>
+      {/* Month nav */}
+      <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
+        <TouchableOpacity onPress={() => setDisplayMonth(new Date(year, month - 1, 1))}
+          style={{ padding: 6, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)' }}>
+          <Text style={{ color: COLORS.text, fontSize: 18, fontWeight: '700' }}>‹</Text>
+        </TouchableOpacity>
+        <Text style={{ color: COLORS.text, fontSize: 16, fontWeight: '800' }}>{MONTH_NAMES[month]} {year}</Text>
+        <TouchableOpacity onPress={() => setDisplayMonth(new Date(year, month + 1, 1))}
+          style={{ padding: 6, borderRadius: 10, backgroundColor: 'rgba(255,255,255,0.08)' }}>
+          <Text style={{ color: COLORS.text, fontSize: 18, fontWeight: '700' }}>›</Text>
+        </TouchableOpacity>
+      </View>
+
+      {/* Day headers */}
+      <View style={{ flexDirection: 'row', marginBottom: 4 }}>
+        {DAY_LABELS.map((d, i) => (
+          <Text key={i} style={{ width: '14.28%', textAlign: 'center', color: COLORS.textMuted, fontSize: 11, fontWeight: '700' }}>{d}</Text>
+        ))}
+      </View>
+
+      {/* Day cells */}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap' }}>
+        {cells.map((day, i) => {
+          const dots = day ? (dayEventMap[day] || []) : [];
+          const sel = isSelected(day);
+          const tod = isToday(day);
+          return (
+            <TouchableOpacity key={i}
+              onPress={() => { if (!day) return; const nd = new Date(year, month, day); onSelectDate(sel ? null : nd); }}
+              style={{ width: '14.28%', alignItems: 'center', paddingVertical: 4 }}
+              activeOpacity={0.7}>
+              <View style={[
+                { width: 30, height: 30, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+                sel && { backgroundColor: COLORS.accent1 },
+                !sel && tod && { borderWidth: 1.5, borderColor: COLORS.accent1 },
+              ]}>
+                <Text style={{ color: day ? (sel ? '#FFF' : COLORS.text) : 'transparent', fontSize: 13, fontWeight: tod ? '800' : '500' }}>{day || ''}</Text>
+              </View>
+              {/* Event dots (max 3) */}
+              <View style={{ flexDirection: 'row', gap: 2, marginTop: 2, height: 6 }}>
+                {dots.slice(0, 3).map((cat, di) => (
+                  <View key={di} style={{ width: 5, height: 5, borderRadius: 3, backgroundColor: getCategoryColor(cat) }} />
+                ))}
+              </View>
+            </TouchableOpacity>
+          );
+        })}
+      </View>
+
+      {selectedDate && (
+        <TouchableOpacity onPress={() => onSelectDate(null)}
+          style={{ marginTop: 10, alignSelf: 'center', paddingHorizontal: 16, paddingVertical: 5, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.08)' }}>
+          <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>✕ Clear filter</Text>
+        </TouchableOpacity>
+      )}
+    </View>
+  );
+}
+
 // ─── Section 3: STUDENT DASHBOARD ────────────────────────────────────
 function StudentDashboard({ route, navigation }) {
   const { userName, userId } = route.params;
@@ -660,6 +805,9 @@ function StudentDashboard({ route, navigation }) {
   const [notifications, setNotifications] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
   const [viewMode, setViewMode] = useState('events');
+  const [savedEventIds, setSavedEventIds] = useState([]);
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+  const [selectedCalDate, setSelectedCalDate] = useState(null);
 
   const [isDetailsModalVisible, setIsDetailsModalVisible] = useState(false);
   const [selectedEvent, setSelectedEvent] = useState(null);
@@ -667,8 +815,8 @@ function StudentDashboard({ route, navigation }) {
   const [newQueryMessage, setNewQueryMessage] = useState('');
   const [selectedCategory, setSelectedCategory] = useState('All');
 
-  const API_URL = 'http://10.57.118.100:3000/api';
-  const SOCKET_URL = 'http://10.57.118.100:3000';
+  const API_URL = 'http://10.191.188.100:3000/api';
+  const SOCKET_URL = 'http://10.191.188.100:3000';
 
   useEffect(() => {
     fetchNotifications();
@@ -691,7 +839,7 @@ function StudentDashboard({ route, navigation }) {
   }, [viewMode]);
 
   // Always keep tickets fresh so profile badges are accurate
-  useEffect(() => { fetchMyTickets(); }, []);
+  useEffect(() => { fetchMyTickets(); fetchWishlist(); }, []);
 
   const fetchNotifications = async () => {
     try {
@@ -722,6 +870,40 @@ function StudentDashboard({ route, navigation }) {
       }
     } catch (_) { Alert.alert('Error', 'Could not load events.'); }
     finally { setIsLoading(false); }
+  };
+
+  const fetchWishlist = async () => {
+    try {
+      const r = await fetch(`${API_URL}/wishlist/${userId}`);
+      const d = await r.json();
+      if (d.success) setSavedEventIds(d.saved_ids);
+    } catch (_) { }
+  };
+
+  const handleToggleWishlist = async (eventId) => {
+    try {
+      const r = await fetch(`${API_URL}/wishlist/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, event_id: eventId }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        setSavedEventIds(prev =>
+          d.saved ? [...prev, eventId] : prev.filter(id => id !== eventId)
+        );
+      }
+    } catch (_) { }
+  };
+
+  const handleShareEvent = async (item) => {
+    try {
+      const dateStr = new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
+      await Share.share({
+        title: item.title,
+        message: `🎪 ${item.title}\n\n📅 ${dateStr}\n📍 ${item.venue}\n\n${item.description ? item.description + '\n\n' : ''}Check it out on ClubCascade!`,
+      });
+    } catch (_) { }
   };
 
   const fetchMyTickets = async () => {
@@ -797,14 +979,18 @@ function StudentDashboard({ route, navigation }) {
     return found ? found.color : COLORS.accent1;
   };
 
-  const filteredEvents = events.filter(e =>
-    (selectedCategory === 'All' || e.category === selectedCategory) &&
-    e.title.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredEvents = events.filter(e => {
+    const matchCat = selectedCategory === 'All' || e.category === selectedCategory;
+    const matchSearch = e.title.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchDate = !selectedCalDate ||
+      (new Date(e.date).toDateString() === selectedCalDate.toDateString());
+    return matchCat && matchSearch && matchDate;
+  });
 
   // ── Render: Event Card ──
   const renderEvent = ({ item }) => {
     const catColor = getCategoryColor(item.category);
+    const isSaved = savedEventIds.includes(item.event_id);
     return (
       <TouchableOpacity onPress={() => openEventDetails(item)} activeOpacity={0.9}
         style={[styles.eventCard, { borderColor: catColor + '30' }]}>
@@ -823,10 +1009,26 @@ function StudentDashboard({ route, navigation }) {
           )
         }
         <View style={styles.eventCardBody}>
-          <View style={[styles.catBadge, { backgroundColor: catColor + '20', borderColor: catColor + '60' }]}>
-            <Text style={[styles.catBadgeText, { color: catColor }]}>
-              {CATEGORIES.find(c => c.label === item.category)?.icon} {item.category || 'General'}
-            </Text>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <View style={[styles.catBadge, { backgroundColor: catColor + '20', borderColor: catColor + '60' }]}>
+              <Text style={[styles.catBadgeText, { color: catColor }]}>
+                {CATEGORIES.find(c => c.label === item.category)?.icon} {item.category || 'General'}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                onPress={(e) => { e.stopPropagation && e.stopPropagation(); handleShareEvent(item); }}
+                style={{ padding: 6, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.1)' }}
+                activeOpacity={0.7}>
+                <Text style={{ fontSize: 16 }}>🔗</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={(e) => { e.stopPropagation && e.stopPropagation(); handleToggleWishlist(item.event_id); }}
+                style={{ padding: 6, borderRadius: 20, backgroundColor: isSaved ? COLORS.accent1 + '25' : 'rgba(255,255,255,0.1)' }}
+                activeOpacity={0.7}>
+                <Text style={{ fontSize: 16 }}>{isSaved ? '🔖' : '🏷️'}</Text>
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.eventCardTitle} numberOfLines={2}>{item.title}</Text>
           <View style={styles.eventCardMeta}>
@@ -953,6 +1155,8 @@ function StudentDashboard({ route, navigation }) {
           userName={userName}
           userId={userId}
           tickets={myTickets}
+          savedEventIds={savedEventIds}
+          onToggleWishlist={handleToggleWishlist}
           navigation={navigation}
         />
       )}
@@ -960,16 +1164,43 @@ function StudentDashboard({ route, navigation }) {
       {/* ── Filters (Discover only) ── */}
       {viewMode === 'events' && (
         <View style={{ paddingHorizontal: 20, marginBottom: 12 }}>
-          <View style={styles.searchBar}>
-            <Text style={{ color: COLORS.textMuted, marginRight: 8, fontSize: 16 }}>🔍</Text>
-            <TextInput
-              style={styles.searchInput}
-              placeholder="Search events..."
-              placeholderTextColor={COLORS.textMuted}
-              value={searchQuery}
-              onChangeText={setSearchQuery}
-            />
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 10 }}>
+            <View style={[styles.searchBar, { flex: 1, marginBottom: 0 }]}>
+              <Text style={{ color: COLORS.textMuted, marginRight: 8, fontSize: 16 }}>🔍</Text>
+              <TextInput
+                style={styles.searchInput}
+                placeholder="Search events..."
+                placeholderTextColor={COLORS.textMuted}
+                value={searchQuery}
+                onChangeText={setSearchQuery}
+              />
+            </View>
+            <TouchableOpacity
+              onPress={() => { setIsCalendarOpen(p => !p); if (isCalendarOpen) setSelectedCalDate(null); }}
+              style={{ marginLeft: 10, padding: 10, borderRadius: 12,
+                backgroundColor: isCalendarOpen ? COLORS.accent1 + '30' : 'rgba(255,255,255,0.08)',
+                borderWidth: 1, borderColor: isCalendarOpen ? COLORS.accent1 + '80' : 'transparent' }}>
+              <Text style={{ fontSize: 18 }}>📅</Text>
+            </TouchableOpacity>
           </View>
+
+          {isCalendarOpen && (
+            <CalendarMiniView
+              events={events}
+              selectedDate={selectedCalDate}
+              onSelectDate={setSelectedCalDate}
+            />
+          )}
+
+          {selectedCalDate && !isCalendarOpen && (
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+              <Text style={{ color: COLORS.accent1, fontSize: 13 }}>📅 {selectedCalDate.toDateString()}</Text>
+              <TouchableOpacity onPress={() => setSelectedCalDate(null)} style={{ marginLeft: 8 }}>
+                <Text style={{ color: COLORS.textMuted, fontSize: 12 }}>✕ Clear</Text>
+              </TouchableOpacity>
+            </View>
+          )}
+
           <ScrollView horizontal showsHorizontalScrollIndicator={false}
             contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
             {CATEGORIES.map(cat => (
@@ -1167,8 +1398,8 @@ function OrganizerDashboard({ route, navigation }) {
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
   const [attendeesList, setAttendeesList] = useState([]);
 
-  const API_URL = 'http://10.57.118.100:3000/api';
-  const SOCKET_URL = 'http://10.57.118.100:3000';
+  const API_URL = 'http://10.191.188.100:3000/api';
+  const SOCKET_URL = 'http://10.191.188.100:3000';
 
   useEffect(() => {
     if (viewMode === 'stats') fetchStats();
@@ -1209,6 +1440,32 @@ function OrganizerDashboard({ route, navigation }) {
         },
       },
     ]);
+  };
+
+  const handleBroadcast = (eventId, eventTitle) => {
+    Alert.prompt(
+      '📣 Broadcast Blast',
+      `Send an urgent message to all registrants of "${eventTitle}":`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Send Blast', style: 'default',
+          onPress: async (msg) => {
+            if (!msg || !msg.trim()) { Alert.alert('Empty', 'Please type a message first.'); return; }
+            try {
+              const r = await fetch(`${API_URL}/events/${eventId}/broadcast`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: msg.trim(), eventTitle }),
+              });
+              const d = await r.json();
+              Alert.alert(d.success ? '🚀 Blast Sent!' : '❌ Failed', d.message);
+            } catch (_) { Alert.alert('Error', 'Server unreachable.'); }
+          },
+        },
+      ],
+      'plain-text'
+    );
   };
 
   const openEditModal = (event) => {
@@ -1602,6 +1859,12 @@ function OrganizerDashboard({ route, navigation }) {
                   <LinearGradient colors={GRAD_PURPLE} style={StyleSheet.absoluteFill} borderRadius={12} />
                   <Text style={styles.actionBtnText}>💬 Enter Q&A Hub</Text>
                 </TouchableOpacity>
+                <TouchableOpacity
+                  onPress={() => handleBroadcast(item.event_id, item.title)}
+                  style={[styles.actionBtn, { marginTop: 10, backgroundColor: 'transparent' }]}>
+                  <LinearGradient colors={['#F59E0B', '#EF4444']} style={StyleSheet.absoluteFill} borderRadius={12} />
+                  <Text style={styles.actionBtnText}>📣 Broadcast Blast</Text>
+                </TouchableOpacity>
               </GlassCard>
             ))
           }
@@ -1723,7 +1986,7 @@ function AdminDashboard({ route, navigation }) {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const API_URL = 'http://10.57.118.100:3000/api';
+  const API_URL = 'http://10.191.188.100:3000/api';
 
   const ADMIN_TABS = [
     { key: 'stats', icon: '📊', label: 'Analytics' },
