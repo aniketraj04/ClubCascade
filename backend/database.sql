@@ -90,3 +90,16 @@ CREATE TABLE IF NOT EXISTS student_friends (
   FOREIGN KEY (student_1_id) REFERENCES users(id) ON DELETE CASCADE,
   FOREIGN KEY (student_2_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- --------------------------------------------------------
+-- PHASE 8: EVENT LIKES & TRENDING
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS event_likes (
+  like_id INT AUTO_INCREMENT PRIMARY KEY,
+  event_id INT NOT NULL,
+  student_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(event_id, student_id),
+  FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
+  FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE
+);

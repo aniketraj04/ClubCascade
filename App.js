@@ -639,6 +639,8 @@ function StudentDashboard({ route, navigation }) {
   const [eventQueries, setEventQueries] = useState([]);
   const [newQueryMessage, setNewQueryMessage] = useState('');
   const [followingFeed, setFollowingFeed] = useState([]);
+  const [likedEventIds, setLikedEventIds] = useState({});  // { event_id: likeCount }
+  const [trendingEvents, setTrendingEvents] = useState([]);
 
   const API_URL = 'http://10.191.188.100:3000/api';
   const SOCKET_URL = 'http://10.191.188.100:3000';
@@ -707,6 +709,10 @@ function StudentDashboard({ route, navigation }) {
       const r2 = await fetch(`${API_URL}/feed/following`);
       const d2 = await r2.json();
       if (d2.success) setFollowingFeed(d2.events);
+
+      const r3 = await fetch(`${API_URL}/events/trending`);
+      const d3 = await r3.json();
+      if (d3.success) setTrendingEvents(d3.events);
     } catch (_) { Alert.alert('Error', 'Could not load events.'); }
     finally { setIsLoading(false); }
   };
@@ -745,6 +751,20 @@ function StudentDashboard({ route, navigation }) {
       const dateStr = new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' });
       await Share.share({ title: item.title, message: `🎪 ${item.title}\n\n📅 ${dateStr}\n📍 ${item.venue}\n\nCheck it out on ClubCascade!` });
     } catch (_) { }
+  };
+
+  const handleToggleLike = async (eventId) => {
+    try {
+      const r = await fetch(`${API_URL}/events/${eventId}/like`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) {
+        setLikedEventIds(prev => ({ ...prev, [eventId]: { liked: d.liked, count: d.likes } }));
+        // refresh trending
+        const r2 = await fetch(`${API_URL}/events/trending`);
+        const d2 = await r2.json();
+        if (d2.success) setTrendingEvents(d2.events);
+      }
+    } catch (_) {}
   };
 
   const handleRegister = async (eventId) => {
@@ -805,10 +825,27 @@ function StudentDashboard({ route, navigation }) {
   });
 
   // ── Event card (matches reference design) ──
-  const renderEvent = ({ item, index }) => {
+  const renderEvent = ({ item }) => {
     const catColor = getCatColor(item.category);
     const isSaved = savedEventIds.includes(item.event_id);
-    const isEnding = false; // can compute based on date
+    const now = new Date();
+    const eventDate = new Date(item.date);
+
+    // Smart state detection
+    const isEnded = eventDate < now;
+    const isRegistered = myTickets.some(t => Number(t.event_id) === Number(item.event_id));
+    const myTicket = myTickets.find(t => Number(t.event_id) === Number(item.event_id));
+    const isFull = !isRegistered && item.limit_participants > 0 && Number(item.current_registered) >= Number(item.limit_participants);
+
+    const lData = likedEventIds[item.event_id];
+    const isLiked = lData?.liked;
+    const likeCount = lData?.count ?? item.likes_count ?? 0;
+
+    // Determine CTA state
+    let ctaState = 'register'; // default
+    if (isEnded) ctaState = 'ended';
+    else if (isRegistered) ctaState = 'registered';
+    else if (isFull) ctaState = 'full';
 
     return (
       <TouchableOpacity onPress={() => openEventDetails(item)} activeOpacity={0.92} style={styles.eventCard}>
@@ -828,6 +865,12 @@ function StudentDashboard({ route, navigation }) {
               <Text style={styles.catChipText}>{item.category || 'General'}</Text>
             </View>
             <View style={{ flexDirection: 'row', gap: 8 }}>
+              {isRegistered && (
+                <View style={{ backgroundColor: '#ECFDF5', borderRadius: 10, paddingHorizontal: 8, paddingVertical: 4, flexDirection: 'row', alignItems: 'center', gap: 3 }}>
+                  <Text style={{ fontSize: 11 }}>✅</Text>
+                  <Text style={{ fontSize: 10, fontWeight: '800', color: '#059669' }}>Registered</Text>
+                </View>
+              )}
               <TouchableOpacity onPress={() => handleShareEvent(item)} style={styles.eventIconBtn}>
                 <Text style={{ fontSize: 14 }}>🔗</Text>
               </TouchableOpacity>
@@ -841,13 +884,15 @@ function StudentDashboard({ route, navigation }) {
         {/* Info below image */}
         <View style={styles.eventCardBody}>
           <Text style={styles.eventDateLine}>
-            {new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()} · {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+            {eventDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()} · {eventDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
           <Text style={styles.eventCardTitle} numberOfLines={2}>{item.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
             <Text style={styles.eventCardMeta}>📍 {item.venue}</Text>
             {item.limit_participants > 0 && (
-              <Text style={styles.eventCardMeta}>👥 {item.limit_participants} spots</Text>
+              <Text style={[styles.eventCardMeta, isFull && { color: C.accentRed, fontWeight: '700' }]}>
+                👥 {item.current_registered ?? 0}/{item.limit_participants} {isFull ? '· FULL' : ''}
+              </Text>
             )}
             {item.organizer_id && (
               <TouchableOpacity onPress={() => navigation.navigate('ClubProfile', { orgId: item.organizer_id, currentUserId: userId })} style={{ backgroundColor: C.bgSection, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
@@ -859,17 +904,84 @@ function StudentDashboard({ route, navigation }) {
             <Text style={styles.eventCardDesc} numberOfLines={2}>{item.description}</Text>
           ) : null}
 
-          {/* CTA row */}
-          <View style={{ flexDirection: 'row', gap: 10, marginTop: 14 }}>
-            <PurpleButton label="Register Now" onPress={() => handleRegister(item.event_id)} style={{ flex: 1 }} />
-            <TouchableOpacity onPress={() => openEventDetails(item)} style={styles.detailsBtn}>
-              <Text style={{ color: C.purple, fontSize: 18, fontWeight: '700' }}>›</Text>
-            </TouchableOpacity>
+          {/* ── SMART CTA SECTION ── */}
+          <View style={{ marginTop: 14 }}>
+
+            {/* STATE: ENDED */}
+            {ctaState === 'ended' && (
+              <View style={{ backgroundColor: '#F3F4F6', borderRadius: 14, paddingVertical: 12, alignItems: 'center' }}>
+                <Text style={{ fontWeight: '800', color: '#9CA3AF', fontSize: 14 }}>⏳ Event Ended</Text>
+              </View>
+            )}
+
+            {/* STATE: FULL */}
+            {ctaState === 'full' && (
+              <View style={{ backgroundColor: '#FEF2F2', borderRadius: 14, paddingVertical: 12, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}>
+                <Text style={{ fontWeight: '800', color: C.accentRed, fontSize: 14 }}>🚫 Event Full</Text>
+              </View>
+            )}
+
+            {/* STATE: REGISTERED */}
+            {ctaState === 'registered' && (
+              <View>
+                <View style={{ backgroundColor: '#ECFDF5', borderRadius: 12, paddingVertical: 8, alignItems: 'center', marginBottom: 10, borderWidth: 1, borderColor: '#A7F3D0' }}>
+                  <Text style={{ fontWeight: '800', color: '#059669', fontSize: 14 }}>✅ You're Registered!</Text>
+                </View>
+                <View style={{ flexDirection: 'row', gap: 8 }}>
+                  <TouchableOpacity
+                    onPress={() => setViewMode('tickets')}
+                    style={{ flex: 1, backgroundColor: C.bgSection, borderRadius: 14, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: C.border }}
+                  >
+                    <Text style={{ color: C.purple, fontWeight: '800', fontSize: 13 }}>🎟 View Ticket</Text>
+                  </TouchableOpacity>
+                  <TouchableOpacity
+                    onPress={() => myTicket && handleCancelRegistration(myTicket.registration_id)}
+                    style={{ flex: 1, backgroundColor: '#FEF2F2', borderRadius: 14, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}
+                  >
+                    <Text style={{ color: C.accentRed, fontWeight: '800', fontSize: 13 }}>✕ Cancel</Text>
+                  </TouchableOpacity>
+                </View>
+              </View>
+            )}
+
+            {/* STATE: REGISTER */}
+            {ctaState === 'register' && (
+              <View style={{ flexDirection: 'row', gap: 10 }}>
+                <PurpleButton label="Register Now" onPress={() => handleRegister(item.event_id)} style={{ flex: 1 }} />
+                <TouchableOpacity
+                  onPress={() => handleToggleLike(item.event_id)}
+                  style={[
+                    styles.detailsBtn,
+                    { flexDirection: 'row', gap: 4, paddingHorizontal: 12,
+                      backgroundColor: isLiked ? '#FFF0F5' : C.bgSection,
+                      borderColor: isLiked ? '#FF4D80' : C.border, borderWidth: 1 }
+                  ]}
+                >
+                  <Text style={{ fontSize: 16 }}>{isLiked ? '❤️' : '🤍'}</Text>
+                  <Text style={{ color: isLiked ? '#FF4D80' : C.textSub, fontWeight: '700', fontSize: 13 }}>{likeCount}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity onPress={() => openEventDetails(item)} style={styles.detailsBtn}>
+                  <Text style={{ color: C.purple, fontSize: 18, fontWeight: '700' }}>›</Text>
+                </TouchableOpacity>
+              </View>
+            )}
+
+            {/* Like row for registered/full/ended states */}
+            {ctaState !== 'register' && (
+              <TouchableOpacity
+                onPress={() => handleToggleLike(item.event_id)}
+                style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 10, alignSelf: 'flex-start' }}
+              >
+                <Text style={{ fontSize: 16 }}>{isLiked ? '❤️' : '🤍'}</Text>
+                <Text style={{ color: isLiked ? '#FF4D80' : C.textSub, fontWeight: '700', fontSize: 13 }}>{likeCount} likes</Text>
+              </TouchableOpacity>
+            )}
           </View>
         </View>
       </TouchableOpacity>
     );
   };
+
 
   // ── Ticket card ──
   const renderTicket = ({ item }) => {
@@ -1043,6 +1155,49 @@ function StudentDashboard({ route, navigation }) {
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100, paddingTop: 4 }}
               showsVerticalScrollIndicator={false}
               refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={C.purple} colors={[C.purple]} />}
+              ListHeaderComponent={viewMode === 'events' && trendingEvents.length > 0 ? (
+                <View style={{ marginBottom: 20 }}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                    <Text style={{ fontSize: 20 }}>🔥</Text>
+                    <Text style={{ fontSize: 17, fontWeight: '900', color: C.text, marginLeft: 6 }}>Trending Now</Text>
+                  </View>
+                  <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginHorizontal: -20 }} contentContainerStyle={{ paddingHorizontal: 20, gap: 12 }}>
+                    {trendingEvents.map(e => {
+                      const catColor = getCatColor(e.category);
+                      const lData = likedEventIds[e.event_id];
+                      const isLiked = lData?.liked ?? !!e.user_liked;
+                      const likeCount = lData?.count ?? e.likes_count ?? 0;
+                      return (
+                        <TouchableOpacity key={e.event_id} onPress={() => openEventDetails(e)} activeOpacity={0.9}
+                          style={{ width: 200, backgroundColor: C.bgCard, borderRadius: 18, overflow: 'hidden', borderWidth: 1, borderColor: C.border, elevation: 3, shadowColor: C.shadow, shadowOpacity: 0.08, shadowRadius: 8 }}>
+                          {e.image_url
+                            ? <Image source={{ uri: e.image_url }} style={{ width: '100%', height: 100 }} resizeMode="cover" />
+                            : <LinearGradient colors={[catColor + '60', catColor + '20']} style={{ width: '100%', height: 100, alignItems: 'center', justifyContent: 'center' }}>
+                                <Text style={{ fontSize: 36 }}>{CATEGORIES.find(c => c.label === e.category)?.icon || '🎪'}</Text>
+                              </LinearGradient>
+                          }
+                          <View style={{ padding: 12 }}>
+                            <Text style={{ fontSize: 13, fontWeight: '800', color: C.text }} numberOfLines={2}>{e.title}</Text>
+                            <Text style={{ fontSize: 11, color: C.textMuted, marginTop: 4 }}>📍 {e.venue}</Text>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+                              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                <Text style={{ fontSize: 14 }}>{isLiked ? '❤️' : '🤍'}</Text>
+                                <Text style={{ fontSize: 13, fontWeight: '800', color: isLiked ? '#FF4D80' : C.textSub }}>{likeCount}</Text>
+                              </View>
+                              <TouchableOpacity onPress={() => handleToggleLike(e.event_id)}
+                                style={{ backgroundColor: isLiked ? '#FFF0F5' : C.bgSection, paddingHorizontal: 10, paddingVertical: 4, borderRadius: 10 }}>
+                                <Text style={{ fontSize: 11, fontWeight: '800', color: isLiked ? '#FF4D80' : C.purple }}>
+                                  {isLiked ? 'Unlike' : 'Like'}
+                                </Text>
+                              </TouchableOpacity>
+                            </View>
+                          </View>
+                        </TouchableOpacity>
+                      );
+                    })}
+                  </ScrollView>
+                </View>
+              ) : null}
               ListEmptyComponent={
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 52, marginBottom: 12 }}>
@@ -1063,57 +1218,116 @@ function StudentDashboard({ route, navigation }) {
       <BottomNav tabs={STUDENT_TABS} active={viewMode} onChange={setViewMode} />
 
       {/* Event Details Modal */}
-      {selectedEvent && (
-        <Modal visible={isDetailsModalVisible} animationType="slide" presentationStyle="pageSheet"
-          onRequestClose={() => setIsDetailsModalVisible(false)}>
-          <SafeAreaView style={{ flex: 1, backgroundColor: C.bgCard }}>
-            <View style={styles.modalNav}>
-              <TouchableOpacity onPress={() => setIsDetailsModalVisible(false)} style={styles.modalCloseBtn}>
-                <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
-              </TouchableOpacity>
-              <Text style={styles.modalTitle} numberOfLines={1}>{selectedEvent.title}</Text>
-              <View style={{ width: 36 }} />
-            </View>
+      {selectedEvent && (() => {
+        const item = selectedEvent;
+        const now = new Date();
+        const eventDate = new Date(item.date);
+        const isEnded = eventDate < now;
+        const isRegistered = myTickets.some(t => Number(t.event_id) === Number(item.event_id));
+        const myTicket = myTickets.find(t => Number(t.event_id) === Number(item.event_id));
+        const isFull = !isRegistered && item.limit_participants > 0 && Number(item.current_registered) >= Number(item.limit_participants);
+        const lData = likedEventIds[item.event_id];
+        const isLiked = lData?.liked;
+        const likeCount = lData?.count ?? item.likes_count ?? 0;
 
-            <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
-              {selectedEvent.image_url
-                ? <Image source={{ uri: selectedEvent.image_url }} style={styles.modalHeroImg} resizeMode="cover" />
-                : (
-                  <LinearGradient colors={[getCatColor(selectedEvent.category) + '40', getCatColor(selectedEvent.category) + '10']}
-                    style={styles.modalHeroPlaceholder}>
-                    <Text style={{ fontSize: 60 }}>{CATEGORIES.find(c => c.label === selectedEvent.category)?.icon || '🎪'}</Text>
-                  </LinearGradient>
-                )
-              }
+        let ctaState = 'register';
+        if (isEnded) ctaState = 'ended';
+        else if (isRegistered) ctaState = 'registered';
+        else if (isFull) ctaState = 'full';
 
-              <View style={[styles.catChip, { backgroundColor: getCatColor(selectedEvent.category), alignSelf: 'flex-start', marginTop: 16, marginBottom: 10 }]}>
-                <Text style={styles.catChipText}>{selectedEvent.category || 'General'}</Text>
+        return (
+          <Modal visible={isDetailsModalVisible} animationType="slide" presentationStyle="pageSheet"
+            onRequestClose={() => setIsDetailsModalVisible(false)}>
+            <SafeAreaView style={{ flex: 1, backgroundColor: C.bgCard }}>
+              <View style={styles.modalNav}>
+                <TouchableOpacity onPress={() => setIsDetailsModalVisible(false)} style={styles.modalCloseBtn}>
+                  <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle} numberOfLines={1}>{selectedEvent.title}</Text>
+                <View style={{ width: 36 }} />
               </View>
 
-              <Text style={styles.modalEventTitle}>{selectedEvent.title}</Text>
+              <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }} showsVerticalScrollIndicator={false}>
+                {selectedEvent.image_url
+                  ? <Image source={{ uri: selectedEvent.image_url }} style={styles.modalHeroImg} resizeMode="cover" />
+                  : (
+                    <LinearGradient colors={[getCatColor(selectedEvent.category) + '40', getCatColor(selectedEvent.category) + '10']}
+                      style={styles.modalHeroPlaceholder}>
+                      <Text style={{ fontSize: 60 }}>{CATEGORIES.find(c => c.label === selectedEvent.category)?.icon || '🎪'}</Text>
+                    </LinearGradient>
+                  )
+                }
 
-              <View style={styles.modalMetaRow}>
-                <View style={styles.modalMetaCard}>
-                  <Text style={styles.modalMetaCardLabel}>DATE & TIME</Text>
-                  <Text style={styles.modalMetaCardValue}>{new Date(selectedEvent.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
-                  <Text style={[styles.modalMetaCardValue, { fontSize: 13, color: C.textSub }]}>{new Date(selectedEvent.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} onwards</Text>
+                <View style={[styles.catChip, { backgroundColor: getCatColor(selectedEvent.category), alignSelf: 'flex-start', marginTop: 16, marginBottom: 10 }]}>
+                  <Text style={styles.catChipText}>{selectedEvent.category || 'General'}</Text>
                 </View>
-                <View style={styles.modalMetaCard}>
-                  <Text style={styles.modalMetaCardLabel}>VENUE</Text>
-                  <Text style={styles.modalMetaCardValue}>{selectedEvent.venue}</Text>
-                  <Text style={[styles.modalMetaCardValue, { fontSize: 13, color: C.purple }]}>View Map</Text>
-                </View>
-              </View>
 
-              {selectedEvent.description ? (
-                <View style={{ marginTop: 16 }}>
-                  <Text style={styles.modalSectionLabel}>ABOUT</Text>
-                  <Text style={styles.modalDesc}>{selectedEvent.description}</Text>
-                </View>
-              ) : null}
+                <Text style={styles.modalEventTitle}>{selectedEvent.title}</Text>
 
-              <PurpleButton label="Register Instantly" icon="🎟" onPress={() => handleRegister(selectedEvent.event_id)}
-                style={{ marginTop: 24, marginBottom: 32 }} />
+                <View style={styles.modalMetaRow}>
+                  <View style={styles.modalMetaCard}>
+                    <Text style={styles.modalMetaCardLabel}>DATE & TIME</Text>
+                    <Text style={styles.modalMetaCardValue}>{new Date(selectedEvent.date).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</Text>
+                    <Text style={[styles.modalMetaCardValue, { fontSize: 13, color: C.textSub }]}>{new Date(selectedEvent.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} onwards</Text>
+                  </View>
+                  <View style={styles.modalMetaCard}>
+                    <Text style={styles.modalMetaCardLabel}>VENUE</Text>
+                    <Text style={styles.modalMetaCardValue}>{selectedEvent.venue}</Text>
+                    {item.limit_participants > 0 && (
+                      <Text style={{ fontSize: 12, color: isFull ? C.accentRed : C.textMuted, fontWeight: '700', marginTop: 4 }}>
+                        👥 {item.current_registered || 0}/{item.limit_participants} Spots {isFull ? '(FULL)' : ''}
+                      </Text>
+                    )}
+                  </View>
+                </View>
+
+                {selectedEvent.description ? (
+                  <View style={{ marginTop: 16 }}>
+                    <Text style={styles.modalSectionLabel}>ABOUT</Text>
+                    <Text style={styles.modalDesc}>{selectedEvent.description}</Text>
+                  </View>
+                ) : null}
+
+                {/* SMART CTA BOARD */}
+                <View style={{ marginTop: 24, marginBottom: 20 }}>
+                  {ctaState === 'ended' && (
+                    <View style={{ backgroundColor: '#F3F4F6', borderRadius: 16, paddingVertical: 16, alignItems: 'center' }}>
+                      <Text style={{ fontWeight: '800', color: '#9CA3AF', fontSize: 16 }}>⏳ This event has ended</Text>
+                    </View>
+                  )}
+
+                  {ctaState === 'full' && (
+                    <View style={{ backgroundColor: '#FEF2F2', borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}>
+                      <Text style={{ fontWeight: '800', color: C.accentRed, fontSize: 16 }}>🚫 Event is Full</Text>
+                    </View>
+                  )}
+
+                  {ctaState === 'registered' && (
+                    <View>
+                      <View style={{ backgroundColor: '#ECFDF5', borderRadius: 16, paddingVertical: 12, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#A7F3D0' }}>
+                        <Text style={{ fontWeight: '800', color: '#059669', fontSize: 16 }}>✅ You're on the guest list!</Text>
+                      </View>
+                      <View style={{ flexDirection: 'row', gap: 10 }}>
+                        <TouchableOpacity
+                          onPress={() => { setIsDetailsModalVisible(false); setViewMode('tickets'); }}
+                          style={{ flex: 1, backgroundColor: C.bgSection, borderRadius: 16, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: C.border }}
+                        >
+                          <Text style={{ color: C.purple, fontWeight: '800', fontSize: 14 }}>🎟 View QR Ticket</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                          onPress={() => myTicket && handleCancelRegistration(myTicket.registration_id)}
+                          style={{ flex: 1, backgroundColor: '#FEF2F2', borderRadius: 16, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}
+                        >
+                          <Text style={{ color: C.accentRed, fontWeight: '800', fontSize: 14 }}>✕ Cancel</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+
+                  {ctaState === 'register' && (
+                    <PurpleButton label="Register Instantly" icon="🎟" onPress={() => handleRegister(selectedEvent.event_id)} />
+                  )}
+                </View>
 
               {/* Q&A */}
               <View style={styles.qaSection}>
@@ -1139,7 +1353,8 @@ function StudentDashboard({ route, navigation }) {
             </ScrollView>
           </SafeAreaView>
         </Modal>
-      )}
+      );
+      })()}
     </View>
   );
 }

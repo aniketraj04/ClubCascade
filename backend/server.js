@@ -126,7 +126,13 @@ app.post('/api/signup', (req, res) => {
 
 // FETCH EVENTS API
 app.get('/api/events', verifyToken, (req, res) => {
-  const sqlQuery = 'SELECT * FROM events ORDER BY date ASC';
+  const sqlQuery = `
+    SELECT e.*, COUNT(r.registration_id) AS current_registered
+    FROM events e
+    LEFT JOIN registrations r ON e.event_id = r.event_id
+    GROUP BY e.event_id
+    ORDER BY e.date ASC
+  `;
   db.query(sqlQuery, (err, results) => {
     if (err) return res.status(500).json({ error: 'Database error' });
     res.json({ success: true, events: results });
@@ -316,7 +322,8 @@ app.get('/api/tickets/:user_id', verifyToken, (req, res) => {
   const userId = req.params.user_id;
 
   const sqlQuery = `
-    SELECT events.title, events.date, events.venue, events.image_url, registrations.registration_id, registrations.attended
+    SELECT events.event_id, events.title, events.date, events.venue, events.image_url,
+           registrations.registration_id, registrations.attended
     FROM registrations
     JOIN events ON registrations.event_id = events.event_id
     WHERE registrations.user_id = ?
@@ -812,6 +819,64 @@ app.post('/api/friends/add', verifyToken, (req, res) => {
   db.query('INSERT IGNORE INTO student_friends (student_1_id, student_2_id) VALUES (?, ?)', [myId, friend_id], (err) => {
     if (err) return res.status(500).json({ success: false });
     res.json({ success: true, message: 'Friend added!' });
+  });
+});
+// ===================================================================
+
+// ===================================================================
+
+// ─── PHASE 8: EVENT LIKES & TRENDING ──────────────────────────────────
+
+// 11. TOGGLE LIKE ON AN EVENT
+app.post('/api/events/:id/like', verifyToken, (req, res) => {
+  const studentId = req.user.id;
+  const eventId = req.params.id;
+  db.query('SELECT * FROM event_likes WHERE event_id = ? AND student_id = ?', [eventId, studentId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false });
+    if (rows.length > 0) {
+      db.query('DELETE FROM event_likes WHERE event_id = ? AND student_id = ?', [eventId, studentId], () => {
+        db.query('SELECT COUNT(*) AS cnt FROM event_likes WHERE event_id = ?', [eventId], (e, r) => {
+          res.json({ success: true, liked: false, likes: r[0].cnt });
+        });
+      });
+    } else {
+      db.query('INSERT INTO event_likes (event_id, student_id) VALUES (?, ?)', [eventId, studentId], () => {
+        db.query('SELECT COUNT(*) AS cnt FROM event_likes WHERE event_id = ?', [eventId], (e, r) => {
+          res.json({ success: true, liked: true, likes: r[0].cnt });
+        });
+      });
+    }
+  });
+});
+
+// 12. GET TRENDING EVENTS (Top 5 most liked upcoming events)
+app.get('/api/events/trending', verifyToken, (req, res) => {
+  db.query(`
+    SELECT e.*, COUNT(el.like_id) AS likes_count,
+           (SELECT 1 FROM event_likes WHERE event_id = e.event_id AND student_id = ?) AS user_liked
+    FROM events e
+    LEFT JOIN event_likes el ON e.event_id = el.event_id
+    WHERE e.date >= NOW() AND (e.status IS NULL OR e.status != 'pending')
+    GROUP BY e.event_id
+    ORDER BY likes_count DESC
+    LIMIT 5
+  `, [req.user.id], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, events: results });
+  });
+});
+
+// 13. GET LIKE COUNT + USER LIKE STATUS FOR A EVENT
+app.get('/api/events/:id/likes', verifyToken, (req, res) => {
+  const studentId = req.user.id;
+  const eventId = req.params.id;
+  db.query(`
+    SELECT COUNT(*) AS cnt,
+    (SELECT 1 FROM event_likes WHERE event_id = ? AND student_id = ?) AS user_liked
+    FROM event_likes WHERE event_id = ?
+  `, [eventId, studentId, eventId], (err, rows) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, likes: rows[0].cnt, liked: !!rows[0].user_liked });
   });
 });
 // ===================================================================
