@@ -43,3 +43,50 @@ CREATE TABLE IF NOT EXISTS event_queries (
     FOREIGN KEY (event_id) REFERENCES events(event_id) ON DELETE CASCADE,
     FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- --------------------------------------------------------
+-- PHASE 6: SOCIAL NETWORK MECHANICS
+-- --------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS club_profiles (
+  profile_id INT AUTO_INCREMENT PRIMARY KEY,
+  organizer_id INT NOT NULL UNIQUE,
+  bio TEXT,
+  logo_url VARCHAR(500),
+  banner_url VARCHAR(500),
+  instagram_handle VARCHAR(100),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organizer_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS followers (
+  follow_id INT AUTO_INCREMENT PRIMARY KEY,
+  student_id INT NOT NULL,
+  organizer_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(student_id, organizer_id),
+  FOREIGN KEY (student_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (organizer_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS club_photos (
+  photo_id INT AUTO_INCREMENT PRIMARY KEY,
+  organizer_id INT NOT NULL,
+  image_url VARCHAR(500) NOT NULL,
+  caption VARCHAR(300),
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (organizer_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+-- --------------------------------------------------------
+-- PHASE 7: INSTAGRAM EXPERIENCE (MUTUALS)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS student_friends (
+  friendship_id INT AUTO_INCREMENT PRIMARY KEY,
+  student_1_id INT NOT NULL,
+  student_2_id INT NOT NULL,
+  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(student_1_id, student_2_id),
+  FOREIGN KEY (student_1_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (student_2_id) REFERENCES users(id) ON DELETE CASCADE
+);

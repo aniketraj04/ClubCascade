@@ -58,7 +58,7 @@ db.connect((err) => {
 const verifyToken = (req, res, next) => {
   const authHeader = req.headers['authorization'];
   if (!authHeader) return res.status(403).json({ success: false, message: 'No token provided' });
-  
+
   const token = authHeader.split(' ')[1];
   jwt.verify(token, JWT_SECRET, (err, decoded) => {
     if (err) return res.status(401).json({ success: false, message: 'Unauthorized access' });
@@ -117,7 +117,7 @@ app.post('/api/signup', (req, res) => {
     else if (err) return res.status(500).json({ error: 'Database error' });
 
     if (role === 'organizer') return res.json({ success: true, message: 'Application submitted! Waiting for Admin approval.' });
-    
+
     // For students, generate a token immediately
     const token = jwt.sign({ id: result.insertId, role: role || 'student' }, JWT_SECRET, { expiresIn: '7d' });
     res.json({ success: true, message: 'Account securely created!', token });
@@ -173,16 +173,16 @@ app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req,
       // Identify all students specifically registered for THIS event to notify them
       db.query('SELECT DISTINCT user_id FROM registrations WHERE event_id = ?', [eventId], (err2, registrants) => {
         const msg = `📣 [${title}] Event details (Time/Venue) have been updated by the Organizer!`;
-        
+
         io.emit('new_event_alert', { message: msg }); // Global visual blip
 
         if (!err2 && registrants.length > 0) {
           const insertValues = registrants.map(r => [r.user_id, msg]);
           db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], () => {
-             res.json({ success: true, message: 'Event updated & Attendees notified! ✨' });
+            res.json({ success: true, message: 'Event updated & Attendees notified! ✨' });
           });
         } else {
-           res.json({ success: true, message: 'Event flawlessly updated!' });
+          res.json({ success: true, message: 'Event flawlessly updated!' });
         }
       });
     });
@@ -491,7 +491,7 @@ app.post('/api/events/:event_id/broadcast', verifyOrganizer, (req, res) => {
 
       db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], (err2) => {
         if (err2) return res.status(500).json({ success: false, message: 'DB error sending notifications.' });
-        
+
         // Broadcast via WebSocket so online students see it in real-time!
         io.emit('new_event_alert', { message: fullMsg });
         res.json({ success: true, message: `Blast sent to ${registrants.length} registrant(s)!` });
@@ -639,7 +639,182 @@ app.get('/api/admin/stats', verifyAdmin, (req, res) => {
   });
 });
 // ===================================================================
+// NEW (PHASE 10): SOCIAL NETWORK MECHANICS (CLUBS & FOLLOWING)
+// ===================================================================
 
+// 1. FETCH INDIVIDUAL CLUB PROFILE
+app.get('/api/clubs/:org_id', verifyToken, (req, res) => {
+  const orgId = req.params.org_id;
+  db.query(`
+    SELECT cp.*, u.name as organizer_name, u.club_name, u.club_role 
+    FROM users u 
+    LEFT JOIN club_profiles cp ON u.id = cp.organizer_id 
+    WHERE u.id = ? AND (u.role = 'organizer' OR u.role = 'admin')
+  `, [orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB Error' });
+    if (results.length === 0) return res.json({ success: false, message: 'Club not found' });
+
+    // Fetch Stats
+    db.query('SELECT count(*) as followersCount FROM followers WHERE organizer_id = ?', [orgId], (err2, fRes) => {
+      db.query('SELECT count(*) as eventsHosted FROM events WHERE organizer_id = ?', [orgId], (err3, eRes) => {
+        const profile = results[0];
+        profile.followersCount = fRes ? fRes[0].followersCount : 0;
+        profile.eventsHosted = eRes ? eRes[0].eventsHosted : 0;
+        res.json({ success: true, profile });
+      });
+    });
+  });
+});
+
+// 2. UPDATE CLUB PROFILE (Organizer Only)
+app.put('/api/clubs/profile', verifyOrganizer, upload.fields([{ name: 'logo', maxCount: 1 }, { name: 'banner', maxCount: 1 }]), (req, res) => {
+  const organizerId = req.user.id;
+  const bio = req.body.bio || '';
+  const instagram_handle = req.body.instagram_handle || '';
+  
+  let finalLogo = req.body.logo_url || null;
+  if(req.files && req.files.logo) {
+      finalLogo = `http://10.191.188.100:3000/uploads/${req.files.logo[0].filename}`;
+  }
+  let finalBanner = req.body.banner_url || null;
+  if(req.files && req.files.banner) {
+      finalBanner = `http://10.191.188.100:3000/uploads/${req.files.banner[0].filename}`;
+  }
+
+  db.query('SELECT * FROM club_profiles WHERE organizer_id = ?', [organizerId], (err, results) => {
+     if (results.length > 0) {
+        db.query('UPDATE club_profiles SET bio=?, logo_url=?, banner_url=?, instagram_handle=? WHERE organizer_id=?',
+           [bio, finalLogo, finalBanner, instagram_handle, organizerId], (err2) => {
+             if (err2) return res.status(500).json({ success: false, message: 'DB Error updating profile.' });
+             res.json({ success: true, message: 'Profile gracefully updated! ✨' });
+        });
+     } else {
+        db.query('INSERT INTO club_profiles (organizer_id, bio, logo_url, banner_url, instagram_handle) VALUES (?, ?, ?, ?, ?)',
+           [organizerId, bio, finalLogo, finalBanner, instagram_handle], (err2) => {
+             if (err2) return res.status(500).json({ success: false, message: 'DB Error creating profile.' });
+             res.json({ success: true, message: 'Profile created! 🎉' });
+        });
+     }
+  });
+});
+
+// 3. FOLLOW / UNFOLLOW A CLUB
+app.post('/api/clubs/:org_id/follow', verifyToken, (req, res) => {
+  const studentId = req.user.id;
+  const orgId = req.params.org_id;
+
+  db.query('SELECT * FROM followers WHERE student_id = ? AND organizer_id = ?', [studentId, orgId], (err, results) => {
+    if (results.length > 0) {
+      db.query('DELETE FROM followers WHERE student_id = ? AND organizer_id = ?', [studentId, orgId], () => {
+        res.json({ success: true, following: false, message: 'Unfollowed' });
+      });
+    } else {
+      db.query('INSERT INTO followers (student_id, organizer_id) VALUES (?, ?)', [studentId, orgId], () => {
+        // Notify the organizer natively!
+        db.query('INSERT INTO notifications (user_id, message) VALUES (?, ?)', [orgId, `🎉 Someone new started following your club!`], () => {
+          io.emit('new_event_alert', { message: `🎉 Buzz: Abstract social update detected!` });
+          res.json({ success: true, following: true, message: 'You are now following this Club! 🔔' });
+        });
+      });
+    }
+  });
+});
+
+// 4. CHECK IF STUDENT IS FOLLOWING A CLUB
+app.get('/api/clubs/:org_id/isFollowing', verifyToken, (req, res) => {
+  const orgId = req.params.org_id;
+  const studentId = req.user.id;
+  db.query('SELECT * FROM followers WHERE student_id = ? AND organizer_id = ?', [studentId, orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, following: results.length > 0 });
+  });
+});
+
+// 5. GET SMART FEED (ONLY EVENTS FROM FOLLOWED CLUBS)
+app.get('/api/feed/following', verifyToken, (req, res) => {
+  const studentId = req.user.id;
+  db.query(`
+     SELECT e.* FROM events e
+     JOIN followers f ON e.organizer_id = f.organizer_id
+     WHERE f.student_id = ?
+     ORDER BY e.date ASC
+   `, [studentId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, events: results });
+  });
+});
+
+// 6. FETCH CLUB PHOTO GALLERY
+app.get('/api/clubs/:org_id/photos', verifyToken, (req, res) => {
+  const orgId = req.params.org_id;
+  db.query('SELECT * FROM club_photos WHERE organizer_id = ? ORDER BY created_at DESC', [orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, photos: results });
+  });
+});
+
+// 7. POST A NEW PHOTO TO CLUB GALLERY (Organizer Only)
+app.post('/api/clubs/photos', verifyOrganizer, upload.single('photo'), (req, res) => {
+  if (!req.file) return res.json({ success: false, message: 'No photo uploaded!' });
+  const organizerId = req.user.id;
+  const imageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+  const caption = req.body.caption || '';
+
+  db.query('INSERT INTO club_photos (organizer_id, image_url, caption) VALUES (?, ?, ?)', [organizerId, imageUrl, caption], (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB Error saving photo' });
+
+    // Alert all followers that a new photo dropped!
+    db.query('SELECT student_id FROM followers WHERE organizer_id = ?', [organizerId], (err2, followers) => {
+      if (!err2 && followers.length > 0) {
+        const msg = `📷 A club you follow just posted a new gallery photo!`;
+        const insertValues = followers.map(f => [f.student_id, msg]);
+        db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], () => {
+          res.json({ success: true, message: 'Photo uploaded and followers alerted! 📸', photo: { image_url: imageUrl, caption } });
+        });
+      } else {
+        res.json({ success: true, message: 'Photo uploaded! 📸', photo: { image_url: imageUrl, caption } });
+      }
+    });
+  });
+});
+
+// ===================================================================
+
+// 8. GET MUTUAL FRIENDS FOLLOWING THIS CLUB
+app.get('/api/clubs/:org_id/mutuals', verifyToken, (req, res) => {
+  const orgId = req.params.org_id;
+  const studentId = req.user.id;
+  db.query(`
+    SELECT u.id, u.name 
+    FROM followers f
+    JOIN users u ON f.student_id = u.id
+    JOIN student_friends sf ON (sf.student_1_id = ? AND sf.student_2_id = u.id) OR (sf.student_2_id = ? AND sf.student_1_id = u.id)
+    WHERE f.organizer_id = ?
+  `, [studentId, studentId, orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, mutuals: results });
+  });
+});
+
+// 9. GET CLUB PAST SUCCESSFUL EVENTS
+app.get('/api/clubs/:org_id/history', verifyToken, (req, res) => {
+  const orgId = req.params.org_id;
+  db.query('SELECT * FROM events WHERE organizer_id = ? AND date < NOW() ORDER BY date DESC', [orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, events: results });
+  });
+});
+
+// 10. ADD A FRIEND (For Simulation)
+app.post('/api/friends/add', verifyToken, (req, res) => {
+  const { friend_id } = req.body;
+  const myId = req.user.id;
+  db.query('INSERT IGNORE INTO student_friends (student_1_id, student_2_id) VALUES (?, ?)', [myId, friend_id], (err) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true, message: 'Friend added!' });
+  });
+});
+// ===================================================================
 
 // We must call `server.listen` instead of `app.listen` so WebSockets and HTTP work identically together!
 server.listen(3000, '0.0.0.0', () => {

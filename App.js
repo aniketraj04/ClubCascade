@@ -638,6 +638,7 @@ function StudentDashboard({ route, navigation }) {
   const [selectedEvent, setSelectedEvent] = useState(null);
   const [eventQueries, setEventQueries] = useState([]);
   const [newQueryMessage, setNewQueryMessage] = useState('');
+  const [followingFeed, setFollowingFeed] = useState([]);
 
   const API_URL = 'http://10.191.188.100:3000/api';
   const SOCKET_URL = 'http://10.191.188.100:3000';
@@ -702,6 +703,10 @@ function StudentDashboard({ route, navigation }) {
       const r = await fetch(`${API_URL}/events`);
       const d = await r.json();
       if (d.success) setEvents(d.events.filter(e => e.status !== 'pending'));
+
+      const r2 = await fetch(`${API_URL}/feed/following`);
+      const d2 = await r2.json();
+      if (d2.success) setFollowingFeed(d2.events);
     } catch (_) { Alert.alert('Error', 'Could not load events.'); }
     finally { setIsLoading(false); }
   };
@@ -792,7 +797,7 @@ function StudentDashboard({ route, navigation }) {
 
   const getCatColor = cat => { const f = CATEGORIES.find(c => c.label === cat); return f ? f.color : C.purple; };
 
-  const filteredEvents = events.filter(e => {
+  const filteredEvents = selectedCategory === 'Following' ? followingFeed : events.filter(e => {
     const matchCat = selectedCategory === 'All' || e.category === selectedCategory;
     const matchSearch = e.title.toLowerCase().includes(searchQuery.toLowerCase());
     const matchDate = !selectedCalDate || new Date(e.date).toDateString() === selectedCalDate.toDateString();
@@ -839,10 +844,15 @@ function StudentDashboard({ route, navigation }) {
             {new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase()} · {new Date(item.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
           </Text>
           <Text style={styles.eventCardTitle} numberOfLines={2}>{item.title}</Text>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
             <Text style={styles.eventCardMeta}>📍 {item.venue}</Text>
             {item.limit_participants > 0 && (
               <Text style={styles.eventCardMeta}>👥 {item.limit_participants} spots</Text>
+            )}
+            {item.organizer_id && (
+              <TouchableOpacity onPress={() => navigation.navigate('ClubProfile', { orgId: item.organizer_id, currentUserId: userId })} style={{ backgroundColor: C.bgSection, paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6 }}>
+                <Text style={{ color: C.purple, fontSize: 11, fontWeight: '800', letterSpacing: 0.5 }}>VIEW CLUB ➔</Text>
+              </TouchableOpacity>
             )}
           </View>
           {item.description ? (
@@ -991,6 +1001,7 @@ function StudentDashboard({ route, navigation }) {
           {/* Category pills */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}
             contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
+            <FilterPill label="🔔 Following" active={selectedCategory === 'Following'} onPress={() => setSelectedCategory('Following')} color={C.accentGreen} />
             {CATEGORIES.map(cat => (
               <FilterPill key={cat.label} label={cat.icon + ' ' + cat.label}
                 active={selectedCategory === cat.label} onPress={() => setSelectedCategory(cat.label)} color={cat.color} />
@@ -1130,6 +1141,159 @@ function StudentDashboard({ route, navigation }) {
         </Modal>
       )}
     </View>
+  );
+}
+
+// ─── ORGANIZER STOREFRONT COMPONENT ───────────────────────────────────
+function OrganizerStorefront({ userId }) {
+  const [bio, setBio] = useState('');
+  const [insta, setInsta] = useState('');
+  const [logoUri, setLogoUri] = useState(null);
+  const [bannerUri, setBannerUri] = useState(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [photos, setPhotos] = useState([]);
+  const [galleryCaption, setGalleryCaption] = useState('');
+  const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
+  const [newPhotoUri, setNewPhotoUri] = useState(null);
+  const API_URL = 'http://10.191.188.100:3000/api';
+
+  useEffect(() => {
+    fetchProfile();
+    fetchPhotos();
+  }, []);
+
+  const fetchProfile = async () => {
+    try {
+      const r = await fetch(`${API_URL}/clubs/${userId}`);
+      const d = await r.json();
+      if (d.success && d.profile) {
+        setBio(d.profile.bio || '');
+        setInsta(d.profile.instagram_handle || '');
+        setLogoUri(d.profile.logo_url || null);
+        setBannerUri(d.profile.banner_url || null);
+      }
+    } catch (_) {}
+  };
+
+  const fetchPhotos = async () => {
+    try {
+      const r = await fetch(`${API_URL}/clubs/${userId}/photos`);
+      const d = await r.json();
+      if (d.success) setPhotos(d.photos);
+    } catch (_) {}
+  };
+
+  const pickImage = async (setter) => {
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, quality: 0.8 });
+    if (!r.canceled) setter(r.assets[0].uri);
+  };
+
+  const saveProfile = async () => {
+    setIsLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('bio', bio);
+      formData.append('instagram_handle', insta);
+      if (logoUri && !logoUri.startsWith('http')) formData.append('logo', { uri: logoUri, name: 'logo.jpg', type: 'image/jpeg' });
+      else if (logoUri) formData.append('logo_url', logoUri);
+      
+      if (bannerUri && !bannerUri.startsWith('http')) formData.append('banner', { uri: bannerUri, name: 'banner.jpg', type: 'image/jpeg' });
+      else if (bannerUri) formData.append('banner_url', bannerUri);
+
+      const r = await fetch(`${API_URL}/clubs/profile`, { method: 'PUT', body: formData });
+      const d = await r.json();
+      Alert.alert(d.success ? 'Saved!' : 'Error', d.message);
+    } catch (_) { Alert.alert('Error', 'Could not save profile'); }
+    finally { setIsLoading(false); }
+  };
+
+  const uploadPhoto = async () => {
+    if (!newPhotoUri) return Alert.alert('Missing Image', 'Please select a photo first');
+    setIsLoading(true);
+    try {
+      const formData = new FormData();
+      formData.append('caption', galleryCaption);
+      formData.append('photo', { uri: newPhotoUri, name: 'gallery.jpg', type: 'image/jpeg' });
+      
+      const r = await fetch(`${API_URL}/clubs/photos`, { method: 'POST', body: formData });
+      const d = await r.json();
+      if (d.success) {
+        Alert.alert('Posted!', d.message);
+        setIsPhotoModalOpen(false);
+        setNewPhotoUri(null);
+        setGalleryCaption('');
+        fetchPhotos();
+      } else { Alert.alert('Error', d.message); }
+    } catch (_) { Alert.alert('Error', 'Upload failed'); }
+    finally { setIsLoading(false); }
+  };
+
+  return (
+    <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+      <Text style={styles.pageTitle}>My Storefront</Text>
+      <Text style={styles.pageSub}>Customize your public club profile</Text>
+      
+      <Card style={{ marginTop: 16 }}>
+        <Text style={styles.fieldLabel}>Banner Image</Text>
+        <TouchableOpacity style={[styles.uploadArea, {minHeight: 120}]} onPress={() => pickImage(setBannerUri)}>
+          {bannerUri ? <Image source={{ uri: bannerUri }} style={{width: '100%', height: 120, borderRadius: 10}} resizeMode="cover" /> 
+                    : <Text style={{color: C.textSub, fontWeight: '600'}}>Tap to Upload Banner (16:9)</Text>}
+        </TouchableOpacity>
+
+        <Text style={styles.fieldLabel}>Profile Logo</Text>
+        <TouchableOpacity style={{width: 80, height: 80, borderRadius: 20, backgroundColor: C.bgSection, alignItems: 'center', justifyContent: 'center', marginBottom: 16, borderWidth: 1, borderColor: C.border}} onPress={() => pickImage(setLogoUri)}>
+          {logoUri ? <Image source={{ uri: logoUri }} style={{width: '100%', height: '100%', borderRadius: 20}} resizeMode="cover" /> 
+                  : <Text style={{fontSize: 24}}>📸</Text>}
+        </TouchableOpacity>
+
+        <Text style={styles.fieldLabel}>Club Bio</Text>
+        <LightInput placeholder="What is your club about?" value={bio} onChangeText={setBio} multiline style={{minHeight: 80}} />
+        
+        <Text style={styles.fieldLabel}>Instagram Action Handle</Text>
+        <LightInput placeholder="@techsociety" value={insta} onChangeText={setInsta} />
+        
+        <PurpleButton label="Save Changes ✓" onPress={saveProfile} disabled={isLoading} style={{marginTop: 10}} />
+      </Card>
+
+      <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 32, marginBottom: 16}}>
+        <Text style={styles.pageTitle}>Gallery</Text>
+        <TouchableOpacity onPress={() => setIsPhotoModalOpen(true)} style={{backgroundColor: C.purplePale, paddingHorizontal: 12, paddingVertical: 6, borderRadius: 14}}>
+          <Text style={{color: C.purple, fontWeight: '800'}}>+ POST</Text>
+        </TouchableOpacity>
+      </View>
+
+      {photos.length === 0 ? (
+        <Card style={{alignItems: 'center', padding: 30}}><Text style={{color: C.textMuted}}>No photos uploaded yet.</Text></Card>
+      ) : (
+        <View style={{flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'}}>
+          {photos.map(p => (
+            <View key={p.photo_id} style={{width: '48%', marginBottom: 12}}>
+              <Image source={{uri: p.image_url}} style={{width: '100%', height: 160, borderRadius: 14}} resizeMode="cover" />
+            </View>
+          ))}
+        </View>
+      )}
+
+      {/* Upload Photo Modal */}
+      <Modal visible={isPhotoModalOpen} animationType="slide" presentationStyle="formSheet">
+        <SafeAreaView style={{flex: 1, backgroundColor: C.bg}}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setIsPhotoModalOpen(false)} style={styles.modalCloseBtn}><Text style={{fontSize: 16, fontWeight: '700'}}>✕</Text></TouchableOpacity>
+            <Text style={styles.modalTitle}>Post to Gallery</Text>
+            <View style={{width: 36}}/>
+          </View>
+          <ScrollView contentContainerStyle={{padding: 20}}>
+             <TouchableOpacity style={[styles.uploadArea, {minHeight: 200}]} onPress={() => pickImage(setNewPhotoUri)}>
+               {newPhotoUri ? <Image source={{uri: newPhotoUri}} style={{width: '100%', height: 200, borderRadius: 10}} resizeMode="cover" /> 
+                            : <Text style={{color: C.textSub, fontWeight: '600'}}>Tap to Select Photo 📸</Text>}
+             </TouchableOpacity>
+             <Text style={styles.fieldLabel}>Caption (Optional)</Text>
+             <LightInput placeholder="Write a short caption..." value={galleryCaption} onChangeText={setGalleryCaption} />
+             <PurpleButton label="Upload & Notify Followers 🚀" onPress={uploadPhoto} disabled={isLoading} style={{marginTop: 16}} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+    </ScrollView>
   );
 }
 
@@ -1335,6 +1499,7 @@ function OrganizerDashboard({ route, navigation }) {
     { key: 'manage', icon: '🎛', label: 'Manage' },
     { key: 'scan', icon: '📷', label: 'Scan QR' },
     { key: 'stats', icon: '📊', label: 'Stats' },
+    { key: 'profile', icon: '🛠', label: 'Storefront' },
   ];
 
   return (
@@ -1533,6 +1698,11 @@ function OrganizerDashboard({ route, navigation }) {
             </SafeAreaView>
           </Modal>
         </ScrollView>
+      )}
+
+      {/* STOREFRONT */}
+      {viewMode === 'profile' && (
+        <OrganizerStorefront userId={userId} />
       )}
 
       <BottomNav tabs={ORG_TABS} active={viewMode} onChange={setViewMode} />
@@ -1791,6 +1961,136 @@ function AdminDashboard({ route, navigation }) {
   );
 }
 
+// ─── CLUB PROFILE SCREEN ────────────────────────────────────────────────
+function ClubProfileScreen({ route, navigation }) {
+  const { orgId } = route.params;
+  const [profile, setProfile] = useState(null);
+  const [isFollowing, setIsFollowing] = useState(false);
+  const [photos, setPhotos] = useState([]);
+  const [mutualFriends, setMutualFriends] = useState([]);
+  const [pastEvents, setPastEvents] = useState([]);
+  const [activeTab, setActiveTab] = useState('gallery'); // 'gallery' or 'history'
+  const API_URL = 'http://10.191.188.100:3000/api';
+
+  useEffect(() => {
+    fetch(`${API_URL}/clubs/${orgId}`).then(r => r.json()).then(d => { if (d.success) setProfile(d.profile) });
+    fetch(`${API_URL}/clubs/${orgId}/isFollowing`).then(r => r.json()).then(d => { if (d.success) setIsFollowing(d.following) });
+    fetch(`${API_URL}/clubs/${orgId}/photos`).then(r => r.json()).then(d => { if (d.success) setPhotos(d.photos) });
+    fetch(`${API_URL}/clubs/${orgId}/mutuals`).then(r => r.json()).then(d => { if (d.success) setMutualFriends(d.mutuals) });
+    fetch(`${API_URL}/clubs/${orgId}/history`).then(r => r.json()).then(d => { if (d.success) setPastEvents(d.events) });
+  }, [orgId]);
+
+  const toggleFollow = async () => {
+    try {
+      const r = await fetch(`${API_URL}/clubs/${orgId}/follow`, { method: 'POST' });
+      const d = await r.json();
+      if (d.success) setIsFollowing(d.following);
+    } catch (_) {}
+  };
+
+  if (!profile) return <View style={[styles.screen, {justifyContent: 'center', alignItems: 'center'}]}><ActivityIndicator color={C.purple} size="large" /></View>;
+
+  return (
+    <View style={styles.screen}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 80 }}>
+         {/* Back Button */}
+         <TouchableOpacity 
+            style={{position: 'absolute', top: 20, left: 16, zIndex: 10, width: 40, height: 40, borderRadius: 20, backgroundColor: 'rgba(255,255,255,0.9)', alignItems: 'center', justifyContent: 'center', elevation: 5, shadowColor: '#000', shadowOpacity: 0.1, shadowRadius: 5}} 
+            onPress={() => navigation.goBack()}
+         >
+           <Text style={{fontSize: 20, fontWeight: '800', color: C.text}}>‹</Text>
+         </TouchableOpacity>
+         
+         {/* Banner */}
+         {profile.banner_url ? (
+           <Image source={{uri: profile.banner_url}} style={{width: '100%', height: 220}} resizeMode="cover" />
+         ) : <LinearGradient colors={GRAD_HERO} style={{width: '100%', height: 220}} />}
+         
+         <View style={{padding: 20, marginTop: -50}}>
+           {/* Logo */}
+           <View style={{shadowColor: C.purple, shadowOpacity: 0.2, shadowRadius: 8, elevation: 5, backgroundColor: C.bgCard, width: 90, height: 90, borderRadius: 24, justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: '#FFF', overflow: 'hidden'}}>
+             {profile.logo_url ? <Image source={{uri: profile.logo_url}} style={{width: '100%', height: '100%'}} /> : <Avatar name={profile.organizer_name} size={90} fontSize={32} />}
+           </View>
+           
+           <View style={{flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: 12}}>
+             <View style={{flex: 1}}>
+               <Text style={{fontSize: 28, fontWeight: '900', color: C.text, letterSpacing: -0.5}}>{profile.club_name || profile.organizer_name} {profile.club_name ? '✅' : ''}</Text>
+               <Text style={{color: C.textSub, fontSize: 13, fontWeight: '600', marginTop: 2}}>{profile.club_role || 'Organizer'}</Text>
+             </View>
+           </View>
+
+           {profile.bio && <Text style={{color: C.textSub, fontSize: 15, marginTop: 16, lineHeight: 22}}>{profile.bio}</Text>}
+           
+           <Card style={{flexDirection: 'row', gap: 20, marginTop: 20, paddingVertical: 14}}>
+              <View style={{flex: 1, alignItems: 'center'}}><Text style={{fontWeight: '900', fontSize: 20, color: C.purple}}>{profile.followersCount || 0}</Text><Text style={{color: C.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2}}>FOLLOWERS</Text></View>
+              <View style={{width: 1, backgroundColor: C.border}} />
+              <View style={{flex: 1, alignItems: 'center'}}><Text style={{fontWeight: '900', fontSize: 20, color: C.text}}>{profile.eventsHosted || 0}</Text><Text style={{color: C.textMuted, fontSize: 11, fontWeight: '600', marginTop: 2}}>EVENTS HOSTED</Text></View>
+           </Card>
+
+           <PurpleButton 
+              label={isFollowing ? 'Following ✓' : 'Follow Club'} 
+              outline={isFollowing} 
+              onPress={toggleFollow} 
+              style={{marginTop: 20}} 
+           />
+
+           {mutualFriends && mutualFriends.length > 0 && (
+              <View style={{flexDirection: 'row', alignItems: 'center', marginTop: 14}}>
+                 <View style={{flexDirection: 'row'}}>
+                   {mutualFriends.slice(0,3).map((f, i) => (
+                     <View key={f.id} style={{width: 24, height: 24, borderRadius: 12, backgroundColor: C.purplePale, marginLeft: i > 0 ? -8 : 0, borderWidth: 1.5, borderColor: C.bgCard, alignItems: 'center', justifyContent: 'center'}}>
+                       <Text style={{fontSize: 8, fontWeight: '700', color: C.purple}}>{f.name[0]}</Text>
+                     </View>
+                   ))}
+                 </View>
+                 <Text style={{fontSize: 12, color: C.textSub, marginLeft: 8}}>
+                   Followed by {mutualFriends[0].name} {mutualFriends.length > 1 ? `and ${mutualFriends.length - 1} others` : ''}
+                 </Text>
+              </View>
+           )}
+
+           {/* Profile Feed Tabs */}
+           <View style={{flexDirection: 'row', marginTop: 32, borderBottomWidth: 0.5, borderColor: C.border}}>
+              <TouchableOpacity onPress={() => setActiveTab('gallery')} style={{flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: activeTab === 'gallery' ? 2 : 0, borderColor: C.text}}>
+                 <Text style={{fontSize: 20, opacity: activeTab === 'gallery' ? 1 : 0.4}}>📸</Text>
+              </TouchableOpacity>
+              <TouchableOpacity onPress={() => setActiveTab('history')} style={{flex: 1, paddingVertical: 12, alignItems: 'center', borderBottomWidth: activeTab === 'history' ? 2 : 0, borderColor: C.text}}>
+                 <Text style={{fontSize: 20, opacity: activeTab === 'history' ? 1 : 0.4}}>🎪</Text>
+              </TouchableOpacity>
+           </View>
+           
+           {/* Feed Content */}
+           <View style={{marginTop: 16}}>
+             {activeTab === 'gallery' && (
+                photos && photos.length > 0 ? (
+                  <View style={{flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between'}}>
+                     {photos.map(p => (
+                       <View key={p.photo_id} style={{width: '48%', marginBottom: 12}}>
+                         <Image source={{uri: p.image_url}} style={{width: '100%', height: 160, borderRadius: 14}} resizeMode="cover" />
+                         {p.caption ? <Text style={{fontSize: 12, color: C.textSub, marginTop: 6, fontWeight: '500'}} numberOfLines={2}>{p.caption}</Text> : null}
+                       </View>
+                     ))}
+                  </View>
+                ) : <Text style={{textAlign: 'center', color: C.textMuted, marginTop: 20}}>No photos yet</Text>
+             )}
+
+             {activeTab === 'history' && (
+                pastEvents && pastEvents.length > 0 ? (
+                  pastEvents.map(e => (
+                    <Card key={e.event_id} style={{marginBottom: 12}}>
+                      <Text style={{fontSize: 16, fontWeight: '800', color: C.text}}>{e.title}</Text>
+                      <Text style={{fontSize: 13, color: C.textMuted, marginTop: 4}}>📅 {new Date(e.date).toLocaleDateString()} · 📍 {e.venue}</Text>
+                    </Card>
+                  ))
+                ) : <Text style={{textAlign: 'center', color: C.textMuted, marginTop: 20}}>No past events recorded</Text>
+             )}
+           </View>
+         </View>
+      </ScrollView>
+    </View>
+  );
+}
+
 // ─── ROUTER ───────────────────────────────────────────────────────────
 export default function App() {
   return (
@@ -1800,6 +2100,7 @@ export default function App() {
         <Stack.Screen name="Student" component={StudentDashboard} />
         <Stack.Screen name="Organizer" component={OrganizerDashboard} />
         <Stack.Screen name="Admin" component={AdminDashboard} />
+        <Stack.Screen name="ClubProfile" component={ClubProfileScreen} />
       </Stack.Navigator>
     </NavigationContainer>
   );
