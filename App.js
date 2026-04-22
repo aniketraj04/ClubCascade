@@ -21,7 +21,7 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // ── JWT Fetch Interceptor ──
 const originalFetch = global.fetch;
 global.fetch = async (url, options = {}) => {
-  if (typeof url === 'string' && url.includes('10.191.188.100') && global.jwtToken) {
+  if (typeof url === 'string' && url.includes('172.18.12.100') && global.jwtToken) {
     options.headers = {
       ...(options.headers || {}),
       'Authorization': 'Bearer ' + global.jwtToken
@@ -219,7 +219,7 @@ function LoginScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
-  const API_URL = 'http://10.191.188.100:3000/api';
+  const API_URL = 'http://172.18.12.100:3000/api';
 
   const CLUB_ROLES = ['President', 'Vice President', 'Coordinator', 'Core Member'];
   const DEPARTMENTS = ['Computer Science', 'Mechanical', 'Electronics', 'Business', 'Arts'];
@@ -366,7 +366,7 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [wishlistEvents, setWishlistEvents] = useState([]);
-  const API_URL = 'http://10.191.188.100:3000/api';
+  const API_URL = 'http://172.18.12.100:3000/api';
 
   useEffect(() => {
     if (userId) {
@@ -641,9 +641,10 @@ function StudentDashboard({ route, navigation }) {
   const [followingFeed, setFollowingFeed] = useState([]);
   const [likedEventIds, setLikedEventIds] = useState({});  // { event_id: likeCount }
   const [trendingEvents, setTrendingEvents] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
 
-  const API_URL = 'http://10.191.188.100:3000/api';
-  const SOCKET_URL = 'http://10.191.188.100:3000';
+  const API_URL = 'http://172.18.12.100:3000/api';
+  const SOCKET_URL = 'http://172.18.12.100:3000';
 
   const groupedNotifications = useMemo(() => {
     const groups = {};
@@ -809,9 +810,16 @@ function StudentDashboard({ route, navigation }) {
     try {
       await fetch(`${API_URL}/queries`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ event_id: selectedEvent.event_id, user_id: userId, user_name: userName, message: newQueryMessage }),
+        body: JSON.stringify({ 
+          event_id: selectedEvent.event_id, 
+          user_id: userId, 
+          user_name: userName, 
+          message: newQueryMessage,
+          parent_query_id: replyingTo?.query_id || null
+        }),
       });
       setNewQueryMessage('');
+      setReplyingTo(null);
     } catch (_) { }
   };
 
@@ -1329,27 +1337,73 @@ function StudentDashboard({ route, navigation }) {
                   )}
                 </View>
 
-              {/* Q&A */}
-              <View style={styles.qaSection}>
-                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
-                  <View style={styles.qaDot} />
-                  <Text style={styles.modalSectionLabel}>LIVE Q&A BOARD</Text>
-                </View>
-                {eventQueries.map((q, i) => (
-                  <View key={i} style={[styles.qaBubble, q.user_name === userName && styles.qaBubbleSelf]}>
-                    <Text style={[styles.qaBubbleName, q.user_name === userName && { color: C.purple }]}>{q.user_name}</Text>
-                    <Text style={styles.qaBubbleMsg}>{q.message}</Text>
+                {/* Community Chat Feed */}
+                <View style={styles.qaSection}>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 }}>
+                    <View style={styles.qaDot} />
+                    <Text style={styles.modalSectionLabel}>COMMUNITY CHAT</Text>
                   </View>
-                ))}
-                <View style={styles.qaInputRow}>
-                  <TextInput style={styles.qaInput} placeholder="Ask something..." placeholderTextColor={C.textMuted}
-                    value={newQueryMessage} onChangeText={setNewQueryMessage} />
-                  <TouchableOpacity onPress={handlePostQuery} style={styles.qaSendBtn}>
-                    <LinearGradient colors={GRAD_PURPLE} style={StyleSheet.absoluteFill} borderRadius={12} />
-                    <Text style={{ fontSize: 18, color: '#FFF' }}>➤</Text>
-                  </TouchableOpacity>
+                  
+                  {eventQueries.length === 0 ? (
+                    <Text style={{ textAlign: 'center', color: C.textMuted, marginVertical: 20 }}>No messages yet. Start the conversation! 👋</Text>
+                  ) : (
+                    eventQueries.map((q, i) => {
+                      const isMe = q.user_name === userName;
+                      const isOrg = q.user_name.includes('[Organizer]');
+                      const parent = q.parent_query_id ? eventQueries.find(item => item.query_id === q.parent_query_id) : null;
+                      const timeStr = q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+                      
+                      return (
+                        <View key={i} style={[styles.qaBubbleWrap, isMe && { alignItems: 'flex-end' }]}>
+                          <View style={[
+                            styles.qaBubble, 
+                            isMe ? styles.qaBubbleSelf : isOrg ? styles.qaBubbleOrg : null,
+                            { maxWidth: '85%' }
+                          ]}>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                              <Text style={[styles.qaBubbleName, isMe ? { color: '#FFF' } : isOrg ? { color: C.purple } : null]}>
+                                {isMe ? 'You' : q.user_name}
+                              </Text>
+                              <Text style={{ fontSize: 10, color: isMe ? '#E0E0E0' : C.textMuted, marginLeft: 10 }}>{timeStr}</Text>
+                            </View>
+                            
+                            {parent && (
+                              <View style={{ backgroundColor: isMe ? 'rgba(255,255,255,0.1)' : 'rgba(0,0,0,0.05)', padding: 6, borderRadius: 8, marginBottom: 6, borderLeftWidth: 3, borderLeftColor: isMe ? '#FFF' : C.purple }}>
+                                <Text style={{ fontSize: 11, fontWeight: '700', color: isMe ? '#FFF' : C.text }}>{parent.user_name}</Text>
+                                <Text style={{ fontSize: 11, color: isMe ? '#EEE' : C.textSub }} numberOfLines={1}>{parent.message}</Text>
+                              </View>
+                            )}
+                            
+                            <Text style={[styles.qaBubbleMsg, isMe && { color: '#FFF' }]}>{q.message}</Text>
+                            
+                            <TouchableOpacity onPress={() => setReplyingTo(q)} style={{ alignSelf: 'flex-end', marginTop: 4 }}>
+                              <Text style={{ fontSize: 11, fontWeight: '800', color: isMe ? '#FFF' : C.purple }}>Reply</Text>
+                            </TouchableOpacity>
+                          </View>
+                        </View>
+                      );
+                    })
+                  )}
+
+                  {/* Input Row */}
+                  {replyingTo && (
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.bgSection, padding: 8, borderTopLeftRadius: 12, borderTopRightRadius: 12, borderBottomWidth: 1, borderColor: C.border }}>
+                      <View>
+                        <Text style={{ fontSize: 11, fontWeight: '800', color: C.purple }}>Replying to {replyingTo.user_name}</Text>
+                        <Text style={{ fontSize: 11, color: C.textSub }} numberOfLines={1}>{replyingTo.message}</Text>
+                      </View>
+                      <TouchableOpacity onPress={() => setReplyingTo(null)}><Text style={{ color: C.accentRed, fontWeight: '800' }}>✕</Text></TouchableOpacity>
+                    </View>
+                  )}
+                  <View style={[styles.qaInputRow, replyingTo && { borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}>
+                    <TextInput style={styles.qaInput} placeholder={replyingTo ? "Write a reply..." : "Say something..."} placeholderTextColor={C.textMuted}
+                      value={newQueryMessage} onChangeText={setNewQueryMessage} />
+                    <TouchableOpacity onPress={handlePostQuery} style={styles.qaSendBtn}>
+                      <LinearGradient colors={GRAD_PURPLE} style={StyleSheet.absoluteFill} borderRadius={12} />
+                      <Text style={{ fontSize: 18, color: '#FFF' }}>➤</Text>
+                    </TouchableOpacity>
+                  </View>
                 </View>
-              </View>
             </ScrollView>
           </SafeAreaView>
         </Modal>
@@ -1370,7 +1424,7 @@ function OrganizerStorefront({ userId }) {
   const [galleryCaption, setGalleryCaption] = useState('');
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [newPhotoUri, setNewPhotoUri] = useState(null);
-  const API_URL = 'http://10.191.188.100:3000/api';
+  const API_URL = 'http://172.18.12.100:3000/api';
 
   useEffect(() => {
     fetchProfile();
@@ -1547,9 +1601,10 @@ function OrganizerDashboard({ route, navigation }) {
   const [isAttendeesVisible, setIsAttendeesVisible] = useState(false);
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
   const [attendeesList, setAttendeesList] = useState([]);
+  const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
 
-  const API_URL = 'http://10.191.188.100:3000/api';
-  const SOCKET_URL = 'http://10.191.188.100:3000';
+  const API_URL = 'http://172.18.12.100:3000/api';
+  const SOCKET_URL = 'http://172.18.12.100:3000';
 
   useEffect(() => {
     if (viewMode === 'stats') fetchStats();
@@ -1981,18 +2036,59 @@ function OrganizerDashboard({ route, navigation }) {
           </View>
           <View style={{ flex: 1, padding: 20 }}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 16 }}>
-              {organizerQueries.map((q, i) => {
-                const isOrg = q.user_name.includes('[Organizer]');
-                return (
-                  <View key={i} style={[styles.qaBubble, isOrg && styles.qaBubbleOrg]}>
-                    <Text style={[styles.qaBubbleName, isOrg && { color: '#0EA5E9' }]}>{q.user_name}</Text>
-                    <Text style={styles.qaBubbleMsg}>{q.message}</Text>
-                  </View>
-                );
-              })}
+              {organizerQueries.length === 0 ? (
+                <Text style={{ textAlign: 'center', color: C.textMuted, marginVertical: 40 }}>No messages yet from students.</Text>
+              ) : (
+                organizerQueries.map((q, i) => {
+                  const isMe = q.user_name.includes('[Organizer]');
+                  const parent = q.parent_query_id ? organizerQueries.find(item => item.query_id === q.parent_query_id) : null;
+                  const timeStr = q.created_at ? new Date(q.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+
+                  return (
+                    <View key={i} style={[styles.qaBubbleWrap, isMe && { alignItems: 'flex-end' }]}>
+                      <View style={[
+                        styles.qaBubble, 
+                        isMe ? styles.qaBubbleOrg : null,
+                        { maxWidth: '85%' }
+                      ]}>
+                        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                          <Text style={[styles.qaBubbleName, isMe ? { color: '#0EA5E9' } : null]}>
+                            {q.user_name}
+                          </Text>
+                          <Text style={{ fontSize: 10, color: C.textMuted, marginLeft: 10 }}>{timeStr}</Text>
+                        </View>
+                        
+                        {parent && (
+                          <View style={{ backgroundColor: 'rgba(0,0,0,0.05)', padding: 6, borderRadius: 8, marginBottom: 6, borderLeftWidth: 3, borderLeftColor: isMe ? '#0EA5E9' : C.purple }}>
+                            <Text style={{ fontSize: 11, fontWeight: '700' }}>{parent.user_name}</Text>
+                            <Text style={{ fontSize: 11, color: C.textSub }} numberOfLines={1}>{parent.message}</Text>
+                          </View>
+                        )}
+                        
+                        <Text style={styles.qaBubbleMsg}>{q.message}</Text>
+                        
+                        <TouchableOpacity onPress={() => setReplyingTo(q)} style={{ alignSelf: 'flex-end', marginTop: 4 }}>
+                          <Text style={{ fontSize: 11, fontWeight: '800', color: isMe ? '#0EA5E9' : C.purple }}>Reply</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  );
+                })
+              )}
             </ScrollView>
-            <View style={styles.qaInputRow}>
-              <TextInput style={styles.qaInput} placeholder="Reply to students..." placeholderTextColor={C.textMuted}
+
+            {/* Input Row */}
+            {replyingTo && (
+              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', backgroundColor: C.bgSection, padding: 8, borderTopLeftRadius: 12, borderTopRightRadius: 12, borderBottomWidth: 1, borderColor: C.border }}>
+                <View>
+                  <Text style={{ fontSize: 11, fontWeight: '800', color: C.purple }}>Replying to {replyingTo.user_name}</Text>
+                  <Text style={{ fontSize: 11, color: C.textSub }} numberOfLines={1}>{replyingTo.message}</Text>
+                </View>
+                <TouchableOpacity onPress={() => setReplyingTo(null)}><Text style={{ color: C.accentRed, fontWeight: '800' }}>✕</Text></TouchableOpacity>
+              </View>
+            )}
+            <View style={[styles.qaInputRow, replyingTo && { borderTopLeftRadius: 0, borderTopRightRadius: 0 }]}>
+              <TextInput style={styles.qaInput} placeholder={replyingTo ? "Write a reply..." : "Reply to students..."} placeholderTextColor={C.textMuted}
                 value={replyMessage} onChangeText={setReplyMessage} />
               <TouchableOpacity onPress={handleOrganizerReply} style={styles.qaSendBtn}>
                 <LinearGradient colors={GRAD_PURPLE} style={StyleSheet.absoluteFill} borderRadius={12} />
@@ -2014,7 +2110,7 @@ function AdminDashboard({ route, navigation }) {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const API_URL = 'http://10.191.188.100:3000/api';
+  const API_URL = 'http://172.18.12.100:3000/api';
 
   const ADMIN_TABS = [
     { key: 'stats', icon: '📊', label: 'Analytics' },
@@ -2185,7 +2281,7 @@ function ClubProfileScreen({ route, navigation }) {
   const [mutualFriends, setMutualFriends] = useState([]);
   const [pastEvents, setPastEvents] = useState([]);
   const [activeTab, setActiveTab] = useState('gallery'); // 'gallery' or 'history'
-  const API_URL = 'http://10.191.188.100:3000/api';
+  const API_URL = 'http://172.18.12.100:3000/api';
 
   useEffect(() => {
     fetch(`${API_URL}/clubs/${orgId}`).then(r => r.json()).then(d => { if (d.success) setProfile(d.profile) });

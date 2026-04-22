@@ -168,7 +168,7 @@ app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req,
 
     let finalImageUrl = req.body.image_url || null;
     if (req.file) {
-      finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+      finalImageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
     }
 
     const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ?, date = ? WHERE event_id = ?';
@@ -235,7 +235,7 @@ app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => 
     // If a physical file was uploaded from the gallery, generate the exact URL for it
     let finalImageUrl = req.body.image_url || null;
     if (req.file) {
-      finalImageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+      finalImageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
       console.log("-> Successfully saved gallery image locally:", req.file.filename);
     }
 
@@ -450,6 +450,7 @@ io.on("connection", (socket) => {
 app.get('/api/queries/:event_id', verifyToken, (req, res) => {
   const eventId = req.params.event_id;
 
+  // We fetch everything, including the parent_query_id for replies
   db.query('SELECT * FROM event_queries WHERE event_id = ? ORDER BY created_at ASC', [eventId], (err, results) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error fetching queries.' });
     res.json({ success: true, queries: results });
@@ -461,19 +462,29 @@ app.get('/api/queries/:event_id', verifyToken, (req, res) => {
 // NEW: POST A NEW Q&A CHAT MESSAGE API
 // ===================================================================
 app.post('/api/queries', verifyToken, (req, res) => {
-  const { event_id, user_id, user_name, message } = req.body;
+  const { event_id, user_id, user_name, message, parent_query_id } = req.body;
   if (!message) return res.json({ success: false, message: 'Message cannot be empty.' });
 
-  db.query('INSERT INTO event_queries (event_id, user_id, user_name, message) VALUES (?, ?, ?, ?)',
-    [event_id, user_id, user_name, message],
-    (err, result) => {
-      if (err) return res.status(500).json({ success: false, message: 'Database error sending message.' });
+  const sql = 'INSERT INTO event_queries (event_id, user_id, user_name, message, parent_query_id) VALUES (?, ?, ?, ?, ?)';
+  db.query(sql, [event_id, user_id, user_name, message, parent_query_id || null], (err, result) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error sending message.' });
 
-      // Because we have our WebSockets Server running, we can broadcast the new message instantly!
-      io.emit('new_event_query', { event_id, user_name, message });
-      res.json({ success: true, message: 'Message securely sent!' });
-    }
-  );
+    const newQueryId = result.insertId;
+    const now = new Date();
+
+    // Enriched broadcast! We send IDs and timestamps so the UI can render instantly
+    io.emit('new_event_query', {
+      query_id: newQueryId,
+      event_id,
+      user_id,
+      user_name,
+      message,
+      parent_query_id: parent_query_id || null,
+      created_at: now
+    });
+
+    res.json({ success: true, message: 'Message securely sent!', query_id: newQueryId });
+  });
 });
 // ===================================================================
 
@@ -681,11 +692,11 @@ app.put('/api/clubs/profile', verifyOrganizer, upload.fields([{ name: 'logo', ma
   
   let finalLogo = req.body.logo_url || null;
   if(req.files && req.files.logo) {
-      finalLogo = `http://10.191.188.100:3000/uploads/${req.files.logo[0].filename}`;
+      finalLogo = `http://172.18.12.100:3000/uploads/${req.files.logo[0].filename}`;
   }
   let finalBanner = req.body.banner_url || null;
   if(req.files && req.files.banner) {
-      finalBanner = `http://10.191.188.100:3000/uploads/${req.files.banner[0].filename}`;
+      finalBanner = `http://172.18.12.100:3000/uploads/${req.files.banner[0].filename}`;
   }
 
   db.query('SELECT * FROM club_profiles WHERE organizer_id = ?', [organizerId], (err, results) => {
@@ -764,7 +775,7 @@ app.get('/api/clubs/:org_id/photos', verifyToken, (req, res) => {
 app.post('/api/clubs/photos', verifyOrganizer, upload.single('photo'), (req, res) => {
   if (!req.file) return res.json({ success: false, message: 'No photo uploaded!' });
   const organizerId = req.user.id;
-  const imageUrl = `http://10.191.188.100:3000/uploads/${req.file.filename}`;
+  const imageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
   const caption = req.body.caption || '';
 
   db.query('INSERT INTO club_photos (organizer_id, image_url, caption) VALUES (?, ?, ?)', [organizerId, imageUrl, caption], (err) => {
