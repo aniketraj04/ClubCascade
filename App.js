@@ -183,9 +183,19 @@ const BottomNav = ({ tabs, active, onChange }) => (
   </View>
 );
 
-// Initials avatar
-const Avatar = ({ name = '', size = 40, fontSize = 15 }) => {
-  const initials = name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase();
+// Initials/Image avatar
+const Avatar = ({ name = '', size = 40, fontSize = 15, url = null }) => {
+  if (url) {
+    return (
+      <Image 
+        source={{ uri: url }} 
+        style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]} 
+        resizeMode="cover" 
+      />
+    );
+  }
+  
+  const initials = name ? name.split(' ').map(w => w[0]).slice(0, 2).join('').toUpperCase() : '?';
   return (
     <LinearGradient colors={GRAD_PURPLE} style={[styles.avatar, { width: size, height: size, borderRadius: size / 2 }]}>
       <Text style={{ color: '#FFF', fontSize, fontWeight: '700' }}>{initials}</Text>
@@ -254,6 +264,8 @@ function LoginScreen({ navigation }) {
       const data = await r.json();
       if (data.success) {
         if (data.token) global.jwtToken = data.token;
+        if (data.user?.profile_picture_url) global.userPic = data.user.profile_picture_url;
+        
         if (isLoginMode) {
           const dest = data.user.role === 'student' ? 'Student' : data.user.role === 'admin' ? 'Admin' : 'Organizer';
           navigation.replace(dest, { userName: data.user.name, userId: data.user.id });
@@ -366,6 +378,8 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [wishlistEvents, setWishlistEvents] = useState([]);
+  const [profilePic, setProfilePic] = useState(global.userPic || null);
+  const [isUploading, setIsUploading] = useState(false);
   const API_URL = 'http://172.18.12.100:3000/api';
 
   useEffect(() => {
@@ -374,6 +388,52 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
         .then(r => r.json()).then(d => { if (d.success) setWishlistEvents(d.events); }).catch(() => { });
     }
   }, [userId, savedEventIds.length]);
+
+  const handlePickAvatar = async () => {
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.8,
+    });
+
+    if (!result.canceled && result.assets && result.assets.length > 0) {
+      const uri = result.assets[0].uri;
+      uploadAvatar(uri);
+    }
+  };
+
+  const uploadAvatar = async (uri) => {
+    setIsUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append('avatar', {
+        uri,
+        name: `avatar_${userId}.jpg`,
+        type: 'image/jpeg'
+      });
+
+      const response = await fetch(`${API_URL}/users/${userId}/avatar`, {
+        method: 'POST',
+        body: formData,
+        headers: {
+          // Authorization will be added by our global fetch interceptor
+        }
+      });
+
+      const data = await response.json();
+      if (data.success) {
+        setProfilePic(data.url);
+        global.userPic = data.url; // Update globally so header reflects it immediately
+      } else {
+        Alert.alert('Error', data.message || 'Failed to upload profile picture');
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Network error while uploading profile picture');
+    } finally {
+      setIsUploading(false);
+    }
+  };
 
   const attendedTickets = tickets.filter(t => t.attended === 1);
   const pastTickets = tickets.filter(t => t.attended === 1 || new Date(t.date) < new Date()).sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -395,7 +455,17 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
 
       {/* Hero card */}
       <LinearGradient colors={GRAD_HERO} style={styles.profileHero}>
-        <Avatar name={userName} size={80} fontSize={28} />
+        <TouchableOpacity onPress={handlePickAvatar} disabled={isUploading} activeOpacity={0.8} style={{ position: 'relative' }}>
+          <Avatar name={userName} size={80} fontSize={28} url={profilePic} />
+          <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: '#FFF', width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.2, shadowRadius: 3, elevation: 4 }}>
+            <Text style={{ fontSize: 12 }}>✏️</Text>
+          </View>
+          {isUploading && (
+            <View style={{ position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.5)', borderRadius: 40, alignItems: 'center', justifyContent: 'center' }}>
+              <ActivityIndicator color="#FFF" size="small" />
+            </View>
+          )}
+        </TouchableOpacity>
         <Text style={styles.profileName}>{userName}</Text>
         <Text style={styles.profileSub}>Student · ClubCascade</Text>
         <View style={[styles.tierChip, { borderColor: 'rgba(255,255,255,0.4)' }]}>
@@ -1086,7 +1156,7 @@ function StudentDashboard({ route, navigation }) {
               </TouchableOpacity>
             )}
             <TouchableOpacity onPress={() => setViewMode('profile')} activeOpacity={0.8}>
-              <Avatar name={userName} size={36} fontSize={13} />
+              <Avatar name={userName} size={36} fontSize={13} url={global.userPic} />
             </TouchableOpacity>
           </View>
         </View>
@@ -2236,8 +2306,8 @@ function AdminDashboard({ route, navigation }) {
                   {users.filter(u => u.account_status !== 'pending').map((item, i) => (
                     <View key={`active-user-${i}`} style={styles.activeCard}>
                       <View style={styles.activeCardHeader}>
-                        <View style={styles.activeCardIconBox}>
-                          <Text style={{ fontSize: 24, color: '#FFF' }}>{item.role === 'admin' ? '👑' : item.role === 'organizer' ? '🎪' : '👤'}</Text>
+                        <View style={{shadowColor: '#8B5CF6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4}}>
+                          <Avatar name={item.name} size={48} fontSize={18} url={item.profile_picture_url} />
                         </View>
                         <View style={styles.activeBadge}>
                           <Text style={styles.activeBadgeText}>ACTIVE</Text>

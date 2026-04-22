@@ -98,6 +98,20 @@ app.post('/api/login', (req, res) => {
   });
 });
 
+// UPDATE PROFILE PICTURE
+app.post('/api/users/:id/avatar', upload.single('avatar'), (req, res) => {
+  const userId = req.params.id;
+  if (!req.file) return res.status(400).json({ success: false, message: 'No image uploaded' });
+  
+  const imageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
+  
+  const sql = 'UPDATE users SET profile_picture_url = ? WHERE id = ?';
+  db.query(sql, [imageUrl, userId], (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error' });
+    res.json({ success: true, message: 'Profile picture updated', url: imageUrl });
+  });
+});
+
 // SIGNUP API
 app.post('/api/signup', (req, res) => {
   const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year } = req.body;
