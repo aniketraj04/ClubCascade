@@ -2189,81 +2189,188 @@ function AdminDashboard({ route, navigation }) {
           )}
 
           {/* USERS */}
-          {viewMode === 'users' && users.map((item, i) => (
-            <Card key={i} style={{ marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                <Avatar name={item.name} size={46} fontSize={16} />
-                <View style={{ flex: 1, marginLeft: 12 }}>
-                  <Text style={styles.cardTitle}>{item.name}</Text>
-                  <Text style={styles.cardMeta}>{item.email}</Text>
-                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
-                    <View style={[styles.roleBadge, { backgroundColor: item.role === 'admin' ? '#FEF2F2' : item.role === 'organizer' ? C.bgSection : '#F0FDF4' }]}>
-                      <Text style={[styles.roleBadgeText, { color: item.role === 'admin' ? C.accentRed : item.role === 'organizer' ? C.purple : C.accentGreen }]}>
-                        {item.role.toUpperCase()}
-                      </Text>
-                    </View>
-                    {item.account_status === 'pending' && (
-                      <View style={[styles.roleBadge, { backgroundColor: '#FFFBEB' }]}>
-                        <Text style={[styles.roleBadgeText, { color: C.accent }]}>PENDING</Text>
-                      </View>
-                    )}
+          {viewMode === 'users' && (
+            <>
+              {/* PENDING ORGANIZERS */}
+              {users.filter(u => u.account_status === 'pending').length > 0 && (
+                <View style={styles.pendingAppHeader}>
+                  <Text style={styles.pendingAppTitle}>Pending Organizers</Text>
+                  <View style={styles.pendingBadge}>
+                    <Text style={styles.pendingBadgeText}>{users.filter(u => u.account_status === 'pending').length} NEW</Text>
                   </View>
-                </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {item.account_status === 'pending' && item.role === 'organizer' && (
-                    <TouchableOpacity onPress={() => handleApproveUser(item.user_id, item.name)} style={styles.adminActionBtn}>
-                      <Text style={{ fontSize: 16 }}>✅</Text>
-                    </TouchableOpacity>
-                  )}
-                  {item.role === 'student' && (
-                    <TouchableOpacity onPress={() => handlePromoteUser(item.user_id, item.name)} style={styles.adminActionBtn}>
-                      <Text style={{ fontSize: 16 }}>⭐</Text>
-                    </TouchableOpacity>
-                  )}
-                  {item.role !== 'admin' && (
-                    <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)} style={[styles.adminActionBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-                      <Text style={{ fontSize: 16 }}>💀</Text>
-                    </TouchableOpacity>
-                  )}
-                </View>
-              </View>
-              {item.role === 'organizer' && item.club_name && (
-                <View style={styles.verifyBlock}>
-                  <Text style={{ color: C.purple, fontSize: 11, fontWeight: '800', marginBottom: 6 }}>VERIFICATION DATA</Text>
-                  <Text style={styles.cardMeta}>Club: <Text style={{ color: C.text, fontWeight: '600' }}>{item.club_name} ({item.club_role})</Text></Text>
-                  <Text style={styles.cardMeta}>Dept: <Text style={{ color: C.text, fontWeight: '600' }}>{item.department} · {item.study_year}</Text></Text>
-                  <Text style={styles.cardMeta}>ID: <Text style={{ color: C.text, fontWeight: '600' }}>{item.student_id}</Text></Text>
                 </View>
               )}
-            </Card>
-          ))}
 
-          {/* EVENTS */}
-          {viewMode === 'events' && events.map((item, i) => (
-            <Card key={i} style={{ marginBottom: 12 }}>
-              <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <View style={{ flex: 1, marginRight: 12 }}>
-                  <Text style={styles.cardTitle}>{item.title}</Text>
-                  <Text style={styles.cardMeta}>{item.venue} · {new Date(item.date).toLocaleDateString()}</Text>
-                  <View style={[styles.roleBadge, { marginTop: 6, alignSelf: 'flex-start', backgroundColor: item.status === 'pending' ? '#FFFBEB' : '#F0FDF4' }]}>
-                    <Text style={[styles.roleBadgeText, { color: item.status === 'pending' ? C.accent : C.accentGreen }]}>
-                      {item.status?.toUpperCase() || 'APPROVED'}
-                    </Text>
+              {users.filter(u => u.account_status === 'pending').map((item, i) => (
+                <View key={`pending-user-${i}`} style={styles.pendingCard}>
+                  <View style={styles.pendingDecorator} />
+                  <Text style={styles.pendingCatLabel}>CLUB REGISTRATION</Text>
+                  <Text style={styles.pendingTitle}>{item.name}</Text>
+                  
+                  {item.club_name && (
+                    <View style={{ marginBottom: 20 }}>
+                      <Text style={[styles.pendingDesc, { marginBottom: 4, fontWeight: '700' }]}>{item.club_name} ({item.club_role})</Text>
+                      <Text style={[styles.pendingDesc, { marginBottom: 2, opacity: 0.7 }]}>Dept: {item.department} · {item.study_year}</Text>
+                      <Text style={[styles.pendingDesc, { marginBottom: 0, opacity: 0.7 }]}>Student ID: {item.student_id}</Text>
+                      <Text style={[styles.pendingDesc, { marginBottom: 0, opacity: 0.7 }]}>Email: {item.email}</Text>
+                    </View>
+                  )}
+                  
+                  <View style={styles.approveActionRow}>
+                    <TouchableOpacity onPress={() => handleApproveUser(item.user_id, item.name)} style={styles.approvePrimaryBtn}>
+                      <Text style={styles.approvePrimaryText}>Approve Organizer</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)} style={styles.rejectSecondaryBtn}>
+                      <Text style={{ fontSize: 16, color: '#7C3AED' }}>✕</Text>
+                    </TouchableOpacity>
                   </View>
                 </View>
-                <View style={{ flexDirection: 'row', gap: 8 }}>
-                  {item.status === 'pending' && (
-                    <TouchableOpacity onPress={() => handleApproveEvent(item.event_id)} style={styles.adminActionBtn}>
-                      <Text style={{ fontSize: 16 }}>✅</Text>
-                    </TouchableOpacity>
-                  )}
-                  <TouchableOpacity onPress={() => handleDeleteEvent(item.event_id, item.title)} style={[styles.adminActionBtn, { backgroundColor: '#FEF2F2', borderColor: '#FECACA' }]}>
-                    <Text style={{ fontSize: 16 }}>💣</Text>
-                  </TouchableOpacity>
+              ))}
+
+              {/* ACTIVE USERS */}
+              {users.filter(u => u.account_status !== 'pending').length > 0 && (
+                <>
+                  <Text style={[styles.sectionTitle, { marginTop: 10, marginBottom: 14, fontSize: 24, fontWeight: '900', color: '#1E1B4B' }]}>Club Directory</Text>
+                  <Text style={{ fontSize: 15, color: '#6B7280', marginBottom: 20, marginTop: -10 }}>Managing {users.filter(u => u.account_status !== 'pending').length} active platform members</Text>
+                  
+                  {users.filter(u => u.account_status !== 'pending').map((item, i) => (
+                    <View key={`active-user-${i}`} style={styles.activeCard}>
+                      <View style={styles.activeCardHeader}>
+                        <View style={styles.activeCardIconBox}>
+                          <Text style={{ fontSize: 24, color: '#FFF' }}>{item.role === 'admin' ? '👑' : item.role === 'organizer' ? '🎪' : '👤'}</Text>
+                        </View>
+                        <View style={styles.activeBadge}>
+                          <Text style={styles.activeBadgeText}>ACTIVE</Text>
+                        </View>
+                      </View>
+                      
+                      <Text style={styles.activeTitle}>{item.club_name || item.name}</Text>
+                      <Text style={styles.activeDesc} numberOfLines={2}>
+                        {item.role === 'organizer' ? `Organizer for ${item.department}` : `Platform ${item.role}`}
+                        {'\n'}{item.email}
+                      </Text>
+                      
+                      <View style={styles.activeMetaRow}>
+                        <View>
+                          <Text style={styles.activeMetaLabel}>ROLE</Text>
+                          <Text style={styles.activeMetaValue}>{item.role.toUpperCase()}</Text>
+                        </View>
+                        <View>
+                          <Text style={styles.activeMetaLabel}>STUDENT ID</Text>
+                          <Text style={styles.activeMetaValue}>{item.student_id || 'N/A'}</Text>
+                        </View>
+                      </View>
+                      
+                      <View style={styles.activeActionRow}>
+                        {item.role === 'student' && (
+                          <TouchableOpacity onPress={() => handlePromoteUser(item.user_id, item.name)} style={styles.activeActionBtn}>
+                            <Text style={{ fontSize: 20 }}>⭐</Text>
+                            <Text style={[styles.activeActionText, { color: '#8B5CF6' }]}>PROMOTE</Text>
+                          </TouchableOpacity>
+                        )}
+                        {item.role !== 'admin' && (
+                          <TouchableOpacity onPress={() => handleDeleteUser(item.user_id, item.name)} style={styles.activeActionBtn}>
+                            <Text style={{ fontSize: 20 }}>🚫</Text>
+                            <Text style={[styles.activeActionText, { color: '#EF4444' }]}>DEACTIVATE</Text>
+                          </TouchableOpacity>
+                        )}
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {users.length === 0 && (
+                <View style={{ alignItems: 'center', marginTop: 60 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 10 }}>👥</Text>
+                  <Text style={styles.cardTitle}>No Users Found</Text>
+                  <Text style={styles.cardMeta}>The platform is empty</Text>
                 </View>
-              </View>
-            </Card>
-          ))}
+              )}
+            </>
+          )}
+
+          {/* EVENTS - PENDING APPROVALS */}
+          {viewMode === 'events' && (
+            <>
+              {events.filter(e => e.status === 'pending').length > 0 && (
+                <View style={styles.pendingAppHeader}>
+                  <Text style={styles.pendingAppTitle}>Pending Applications</Text>
+                  <View style={styles.pendingBadge}>
+                    <Text style={styles.pendingBadgeText}>{events.filter(e => e.status === 'pending').length} NEW</Text>
+                  </View>
+                </View>
+              )}
+
+              {events.filter(e => e.status === 'pending').map((item, i) => (
+                <View key={i} style={styles.pendingCard}>
+                  <View style={styles.pendingDecorator} />
+                  <Text style={styles.pendingCatLabel}>{item.category?.toUpperCase() || 'GENERAL'}</Text>
+                  <Text style={styles.pendingTitle}>{item.title}</Text>
+                  <Text style={styles.pendingDesc} numberOfLines={3}>{item.description || "Seeking approval for a community project and weekly workshops."}</Text>
+                  
+                  <View style={styles.approveActionRow}>
+                    <TouchableOpacity onPress={() => handleApproveEvent(item.event_id)} style={styles.approvePrimaryBtn}>
+                      <Text style={styles.approvePrimaryText}>Approve</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity onPress={() => handleDeleteEvent(item.event_id, item.title)} style={styles.rejectSecondaryBtn}>
+                      <Text style={{ fontSize: 16, color: '#7C3AED' }}>✕</Text>
+                    </TouchableOpacity>
+                  </View>
+                </View>
+              ))}
+
+              {/* APPROVED EVENTS (Premium Card List) */}
+              {events.filter(e => e.status !== 'pending').length > 0 && (
+                <>
+                  <Text style={[styles.sectionTitle, { marginTop: 10, marginBottom: 14, fontSize: 24, fontWeight: '900', color: '#1E1B4B' }]}>Live Events</Text>
+                  <Text style={{ fontSize: 15, color: '#6B7280', marginBottom: 20, marginTop: -10 }}>Managing {events.filter(e => e.status !== 'pending').length} published events</Text>
+                  
+                  {events.filter(e => e.status !== 'pending').map((item, i) => (
+                    <View key={`active-event-${i}`} style={styles.activeCard}>
+                      <View style={styles.activeCardHeader}>
+                        <View style={[styles.activeCardIconBox, { backgroundColor: '#EC4899' }]}>
+                          <Text style={{ fontSize: 24, color: '#FFF' }}>📅</Text>
+                        </View>
+                        <View style={styles.activeBadge}>
+                          <Text style={styles.activeBadgeText}>PUBLISHED</Text>
+                        </View>
+                      </View>
+                      
+                      <Text style={styles.activeTitle}>{item.title}</Text>
+                      <Text style={styles.activeDesc} numberOfLines={2}>{item.description || 'No description provided.'}</Text>
+                      
+                      <View style={styles.activeMetaRow}>
+                        <View style={{ flex: 1 }}>
+                          <Text style={styles.activeMetaLabel}>VENUE</Text>
+                          <Text style={styles.activeMetaValue} numberOfLines={1}>{item.venue}</Text>
+                        </View>
+                        <View>
+                          <Text style={styles.activeMetaLabel}>DATE</Text>
+                          <Text style={styles.activeMetaValue}>{new Date(item.date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</Text>
+                        </View>
+                      </View>
+                      
+                      <View style={styles.activeActionRow}>
+                        <TouchableOpacity onPress={() => handleDeleteEvent(item.event_id, item.title)} style={styles.activeActionBtn}>
+                          <Text style={{ fontSize: 20 }}>🚫</Text>
+                          <Text style={[styles.activeActionText, { color: '#EF4444' }]}>DEACTIVATE</Text>
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  ))}
+                </>
+              )}
+
+              {events.length === 0 && (
+                <View style={{ alignItems: 'center', marginTop: 60 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 10 }}>🎉</Text>
+                  <Text style={styles.cardTitle}>Inbox Zero</Text>
+                  <Text style={styles.cardMeta}>No events waiting for approval</Text>
+                </View>
+              )}
+            </>
+          )}
         </ScrollView>
       )}
 
@@ -2752,4 +2859,56 @@ const styles = StyleSheet.create({
   emptyState: { alignItems: 'center', paddingVertical: 60 },
   emptyStateTitle: { fontSize: 18, fontWeight: '700', color: C.text, marginBottom: 8 },
   emptyStateSub: { fontSize: 14, color: C.textMuted },
+
+  // ── Pending App Styles (Admin) ──
+  pendingAppHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20, marginTop: 10 },
+  pendingAppTitle: { fontSize: 24, fontWeight: '900', color: '#2D3142', letterSpacing: -0.5 },
+  pendingBadge: { backgroundColor: '#F59E0B', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 12 },
+  pendingBadgeText: { color: '#FFF', fontSize: 11, fontWeight: '800', textTransform: 'uppercase' },
+  
+  pendingCard: { 
+    backgroundColor: '#F0E7FF', borderRadius: 24, padding: 24, marginBottom: 20, 
+    position: 'relative', overflow: 'hidden', borderWidth: 1, borderColor: '#E9D5FF'
+  },
+  pendingDecorator: {
+    position: 'absolute', top: -40, right: -40, width: 100, height: 100, 
+    borderRadius: 50, backgroundColor: 'rgba(233, 213, 255, 0.5)'
+  },
+  pendingCatLabel: { fontSize: 10, fontWeight: '800', color: '#7C3AED', textTransform: 'uppercase', letterSpacing: 1.2, marginBottom: 8 },
+  pendingTitle: { fontSize: 20, fontWeight: '800', color: '#1E1B4B', marginBottom: 6 },
+  pendingDesc: { fontSize: 14, color: '#4F46E5', opacity: 0.8, lineHeight: 20, marginBottom: 20 },
+  
+  approveActionRow: { flexDirection: 'row', gap: 12, alignItems: 'center' },
+  approvePrimaryBtn: { 
+    flex: 1, height: 48, borderRadius: 24, backgroundColor: '#7C3AED', 
+    alignItems: 'center', justifyContent: 'center', 
+    shadowColor: '#7C3AED', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4
+  },
+  approvePrimaryText: { color: '#FFF', fontSize: 15, fontWeight: '700' },
+  rejectSecondaryBtn: { 
+    width: 48, height: 48, borderRadius: 12, backgroundColor: '#E9D5FF', 
+    alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: '#D8B4FE'
+  },
+  
+  // ── Active Card Styles (Admin) ──
+  activeCard: {
+    backgroundColor: '#F9F5FF', borderRadius: 24, padding: 20, marginBottom: 20,
+    borderWidth: 1, borderColor: '#F3E8FF'
+  },
+  activeCardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
+  activeCardIconBox: {
+    width: 48, height: 48, borderRadius: 16, backgroundColor: '#8B5CF6',
+    alignItems: 'center', justifyContent: 'center',
+    shadowColor: '#8B5CF6', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.3, shadowRadius: 8, elevation: 4
+  },
+  activeBadge: { backgroundColor: '#22D3EE', paddingHorizontal: 10, paddingVertical: 4, borderRadius: 6 },
+  activeBadgeText: { color: '#083344', fontSize: 10, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+  activeTitle: { fontSize: 20, fontWeight: '900', color: '#1E1B4B', marginBottom: 6, letterSpacing: -0.3 },
+  activeDesc: { fontSize: 14, color: '#6B7280', lineHeight: 22, marginBottom: 16 },
+  activeMetaRow: { flexDirection: 'row', gap: 24, marginBottom: 20 },
+  activeMetaLabel: { fontSize: 10, fontWeight: '800', color: '#9CA3AF', textTransform: 'uppercase', letterSpacing: 1, marginBottom: 4 },
+  activeMetaValue: { fontSize: 16, fontWeight: '800', color: '#1F2937' },
+  activeActionRow: { flexDirection: 'row', justifyContent: 'space-around', borderTopWidth: 1, borderTopColor: '#F3E8FF', paddingTop: 16 },
+  activeActionBtn: { alignItems: 'center', gap: 4 },
+  activeActionText: { fontSize: 10, fontWeight: '800', textTransform: 'uppercase' },
 });
