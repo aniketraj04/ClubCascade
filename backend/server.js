@@ -8,8 +8,24 @@ const fs = require('fs');
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
 
-const { Server } = require("socket.io"); // NEW
-const http = require("http"); // NEW
+const { Server } = require("socket.io");
+const http = require("http");
+const fetch = require('node-fetch');
+
+// ─── Expo Push Notification Helper ────────────────────────────────────
+async function sendPushNotification(tokens, title, body) {
+  if (!tokens || tokens.length === 0) return;
+  const validTokens = tokens.filter(t => t && t.startsWith('ExponentPushToken'));
+  if (validTokens.length === 0) return;
+  const messages = validTokens.map(token => ({ to: token, sound: 'default', title, body, priority: 'high' }));
+  try {
+    await fetch('https://exp.host/--/api/v2/push/send', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json', 'Accept-Encoding': 'gzip, deflate' },
+      body: JSON.stringify(messages),
+    });
+  } catch (e) { console.error('Push notification error:', e.message); }
+}
 
 const app = express();
 const server = http.createServer(app); // NEW: Our Real-Time Streaming Server wrapper
@@ -81,6 +97,16 @@ const verifyOrganizer = (req, res, next) => {
     next();
   });
 };
+
+// SAVE PUSH TOKEN API
+app.post('/api/users/:id/push-token', verifyToken, (req, res) => {
+  const { push_token } = req.body;
+  if (!push_token) return res.json({ success: false });
+  db.query('UPDATE users SET push_token = ? WHERE id = ?', [push_token, req.params.id], (err) => {
+    if (err) return res.status(500).json({ success: false });
+    res.json({ success: true });
+  });
+});
 
 // LOGIN API 
 app.post('/api/login', (req, res) => {
@@ -345,10 +371,13 @@ app.delete('/api/cancel-registration/:registration_id', verifyToken, (req, res) 
           db.query('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)', [nextStudent.student_id, event_id], (err) => {
             if (!err) {
               db.query('DELETE FROM event_waitlist WHERE waitlist_id = ?', [nextStudent.waitlist_id]);
-              io.emit('waitlist_promoted', {
-                student_id: nextStudent.student_id,
-                event_id: event_id,
-                message: 'A spot opened up! You have been automatically registered from the waitlist.'
+              const promotedMsg = 'A spot opened up! You have been automatically registered from the waitlist.';
+              io.emit('waitlist_promoted', { student_id: nextStudent.student_id, event_id: event_id, message: promotedMsg });
+              // Send push notification to the promoted student
+              db.query('SELECT push_token FROM users WHERE id = ?', [nextStudent.student_id], (e, rows) => {
+                if (!e && rows.length > 0 && rows[0].push_token) {
+                  sendPushNotification([rows[0].push_token], '🎉 You got in!', promotedMsg);
+                }
               });
             }
           });
@@ -578,9 +607,8 @@ app.post('/api/events/:event_id/broadcast', verifyOrganizer, (req, res) => {
   const { message, eventTitle } = req.body;
   if (!message) return res.json({ success: false, message: 'Message cannot be empty.' });
 
-  // Fetch all users registered for this event
   db.query(
-    'SELECT DISTINCT r.user_id FROM registrations r WHERE r.event_id = ?',
+    'SELECT DISTINCT u.id as user_id, u.push_token FROM registrations r JOIN users u ON r.user_id = u.id WHERE r.event_id = ?',
     [eventId],
     (err, registrants) => {
       if (err) return res.status(500).json({ success: false, message: 'DB error fetching registrants.' });
@@ -592,8 +620,13 @@ app.post('/api/events/:event_id/broadcast', verifyOrganizer, (req, res) => {
       db.query('INSERT INTO notifications (user_id, message) VALUES ?', [insertValues], (err2) => {
         if (err2) return res.status(500).json({ success: false, message: 'DB error sending notifications.' });
 
-        // Broadcast via WebSocket so online students see it in real-time!
+        // Real-time WebSocket for online users
         io.emit('new_event_alert', { message: fullMsg });
+
+        // Push Notifications for offline users
+        const tokens = registrants.map(r => r.push_token);
+        sendPushNotification(tokens, `📣 ${eventTitle}`, message);
+
         res.json({ success: true, message: `Blast sent to ${registrants.length} registrant(s)!` });
       });
     }

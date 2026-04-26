@@ -27,7 +27,19 @@
     },
     "plugins": [
       "@react-native-community/datetimepicker",
-      "expo-barcode-scanner"
-    ]
+      "expo-barcode-scanner",
+      [
+        "expo-notifications",
+        {
+          "icon": "./assets/icon.png",
+          "color": "#7C3AED"
+        }
+      ]
+    ],
+    "extra": {
+      "eas": {
+        "projectId": "your-project-id"
+      }
+    }
   }
 }

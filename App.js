@@ -5,8 +5,61 @@ import {
   Animated, Dimensions, StatusBar, Platform, Share, RefreshControl
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
+import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { create } from 'zustand';
+import DateTimePicker from '@react-native-community/datetimepicker';
+import * as ImagePicker from 'expo-image-picker';
+import QRCode from 'react-native-qrcode-svg';
+import { CameraView, useCameraPermissions } from 'expo-camera';
+import * as FileSystem from 'expo-file-system/legacy';
+import * as Sharing from 'expo-sharing';
+import * as Calendar from 'expo-calendar';
+import * as Notifications from 'expo-notifications';
+import * as Device from 'expo-device';
+import Constants from 'expo-constants';
+import { io } from 'socket.io-client';
+import { LinearGradient } from 'expo-linear-gradient';
 
+
+// ─── Configure notification display behaviour ────────────────────────────────
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({ shouldShowAlert: true, shouldPlaySound: true, shouldSetBadge: true }),
+});
+
+async function registerForPushNotifications(userId, apiUrl) {
+  if (!Device.isDevice) {
+    console.log('Push notifications only work on physical devices.');
+    return;
+  }
+  const { status: existing } = await Notifications.getPermissionsAsync();
+  let finalStatus = existing;
+  if (existing !== 'granted') {
+    const { status } = await Notifications.requestPermissionsAsync();
+    finalStatus = status;
+  }
+  if (finalStatus !== 'granted') {
+    console.log('Push notification permission denied.');
+    return;
+  }
+  try {
+    // Read projectId from app.json -> extra.eas.projectId
+    const projectId = Constants.expoConfig?.extra?.eas?.projectId;
+    if (!projectId || projectId === 'your-project-id') {
+      console.log('Expo projectId not set in app.json. Push tokens skipped.');
+      return;
+    }
+    const tokenData = await Notifications.getExpoPushTokenAsync({ projectId });
+    const pushToken = tokenData.data;
+    console.log('Push token obtained:', pushToken);
+    await fetch(`${apiUrl}/users/${userId}/push-token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ push_token: pushToken }),
+    });
+  } catch (e) { console.log('Push token registration failed:', e.message); }
+}
+
+// ─── Global Auth Store ────────────────────────────────────────────────────────
 const useAuthStore = create((set) => ({
   user: null,
   token: null,
@@ -15,16 +68,6 @@ const useAuthStore = create((set) => ({
   updateProfilePic: (url) => set((state) => ({ user: { ...state.user, profile_picture_url: url } })),
   logout: () => set({ user: null, token: null })
 }));
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import DateTimePicker from '@react-native-community/datetimepicker';
-import * as ImagePicker from 'expo-image-picker';
-import QRCode from 'react-native-qrcode-svg';
-import { CameraView, useCameraPermissions } from 'expo-camera';
-import * as FileSystem from 'expo-file-system/legacy';
-import * as Sharing from 'expo-sharing';
-import * as Calendar from 'expo-calendar';
-import { io } from 'socket.io-client';
-import { LinearGradient } from 'expo-linear-gradient';
 
 const Stack = createNativeStackNavigator();
 const { width: SCREEN_W } = Dimensions.get('window');
@@ -280,6 +323,8 @@ function LoginScreen({ navigation }) {
         
         if (isLoginMode) {
           const dest = data.user.role === 'student' ? 'Student' : data.user.role === 'admin' ? 'Admin' : 'Organizer';
+          // Register device for push notifications silently in background
+          registerForPushNotifications(data.user.id, process.env.EXPO_PUBLIC_API_URL);
           navigation.replace(dest);
         } else {
           Alert.alert('Account created! ✨', data.message);
