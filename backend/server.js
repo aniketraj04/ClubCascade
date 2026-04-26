@@ -297,7 +297,16 @@ app.post('/api/register', verifyToken, (req, res) => {
 
     const event = results[0];
     if (event.limit_participants > 0 && event.current_count >= event.limit_participants) {
-      return res.json({ success: false, message: 'Sorry, this event is completely full!' });
+      db.query('SELECT * FROM event_waitlist WHERE student_id = ? AND event_id = ?', [user_id, event_id], (err, wlResults) => {
+        if (err) return res.status(500).json({ success: false, message: 'Database error checking waitlist.' });
+        if (wlResults.length > 0) return res.json({ success: false, message: 'You are already on the waitlist for this event!' });
+        
+        db.query('INSERT INTO event_waitlist (student_id, event_id) VALUES (?, ?)', [user_id, event_id], (err) => {
+          if (err) return res.status(500).json({ success: false, message: 'Database error adding to waitlist.' });
+          return res.json({ success: true, waitlisted: true, message: 'Event full. You are on the waitlist!' });
+        });
+      });
+      return;
     }
 
     // 2. Check if the student is ALREADY registered
@@ -322,10 +331,32 @@ app.post('/api/register', verifyToken, (req, res) => {
 app.delete('/api/cancel-registration/:registration_id', verifyToken, (req, res) => {
   const regId = req.params.registration_id;
 
-  db.query('DELETE FROM registrations WHERE registration_id = ?', [regId], (err, result) => {
-    if (err) return res.status(500).json({ success: false, message: 'Database error while cancelling.' });
-    if (result.affectedRows === 0) return res.json({ success: false, message: 'Ticket not found!' });
-    res.json({ success: true, message: 'Ticket successfully withdrawn! We have freed up your slot.' });
+  db.query('SELECT event_id FROM registrations WHERE registration_id = ?', [regId], (err, results) => {
+    if (err || results.length === 0) return res.json({ success: false, message: 'Ticket not found!' });
+    const event_id = results[0].event_id;
+
+    db.query('DELETE FROM registrations WHERE registration_id = ?', [regId], (err, result) => {
+      if (err) return res.status(500).json({ success: false, message: 'Database error while cancelling.' });
+      
+      // Auto-promote next person on the waitlist
+      db.query('SELECT waitlist_id, student_id FROM event_waitlist WHERE event_id = ? ORDER BY joined_at ASC LIMIT 1', [event_id], (err, wlResults) => {
+        if (wlResults && wlResults.length > 0) {
+          const nextStudent = wlResults[0];
+          db.query('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)', [nextStudent.student_id, event_id], (err) => {
+            if (!err) {
+              db.query('DELETE FROM event_waitlist WHERE waitlist_id = ?', [nextStudent.waitlist_id]);
+              io.emit('waitlist_promoted', {
+                student_id: nextStudent.student_id,
+                event_id: event_id,
+                message: 'A spot opened up! You have been automatically registered from the waitlist.'
+              });
+            }
+          });
+        }
+      });
+
+      res.json({ success: true, message: 'Ticket successfully withdrawn! We have freed up your slot.' });
+    });
   });
 });
 // ===================================================================
@@ -339,16 +370,49 @@ app.get('/api/tickets/:user_id', verifyToken, (req, res) => {
 
   const sqlQuery = `
     SELECT events.event_id, events.title, events.date, events.venue, events.image_url,
-           registrations.registration_id, registrations.attended
+           registrations.registration_id, registrations.attended,
+           (SELECT COUNT(*) FROM event_feedback WHERE event_feedback.event_id = events.event_id AND event_feedback.user_id = ?) as has_feedback
     FROM registrations
     JOIN events ON registrations.event_id = events.event_id
     WHERE registrations.user_id = ?
     ORDER BY events.date ASC
   `;
 
-  db.query(sqlQuery, [userId], (err, results) => {
+  db.query(sqlQuery, [userId, userId], (err, results) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error' });
     res.json({ success: true, tickets: results });
+  });
+});
+
+// ===================================================================
+// NEW: EVENT FEEDBACK API
+// ===================================================================
+app.post('/api/events/:event_id/feedback', verifyToken, (req, res) => {
+  const { event_id } = req.params;
+  const { user_id, rating, comments } = req.body;
+  if (!rating || rating < 1 || rating > 5) return res.json({ success: false, message: 'Invalid rating.' });
+
+  const query = 'INSERT INTO event_feedback (event_id, user_id, rating, comments) VALUES (?, ?, ?, ?)';
+  db.query(query, [event_id, user_id, rating, comments], (err) => {
+    if (err) {
+      if (err.code === 'ER_DUP_ENTRY') return res.json({ success: false, message: 'You already submitted feedback for this event.' });
+      return res.status(500).json({ success: false, message: 'Database error while submitting feedback.' });
+    }
+    res.json({ success: true, message: 'Thank you! Your anonymous feedback has been sent to the organizer.' });
+  });
+});
+
+app.get('/api/events/:event_id/feedback', verifyOrganizer, (req, res) => {
+  const { event_id } = req.params;
+  const query = 'SELECT rating, comments, created_at FROM event_feedback WHERE event_id = ? ORDER BY created_at DESC';
+  db.query(query, [event_id], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error fetching feedback.' });
+    let avg = 0;
+    if (results.length > 0) {
+      const sum = results.reduce((acc, curr) => acc + curr.rating, 0);
+      avg = (sum / results.length).toFixed(1);
+    }
+    res.json({ success: true, average_rating: avg, feedback: results });
   });
 });
 // ===================================================================

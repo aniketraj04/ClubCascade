@@ -5,6 +5,16 @@ import {
   Animated, Dimensions, StatusBar, Platform, Share, RefreshControl
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
+import { create } from 'zustand';
+
+const useAuthStore = create((set) => ({
+  user: null,
+  token: null,
+  setUser: (user) => set({ user }),
+  setToken: (token) => set({ token }),
+  updateProfilePic: (url) => set((state) => ({ user: { ...state.user, profile_picture_url: url } })),
+  logout: () => set({ user: null, token: null })
+}));
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import DateTimePicker from '@react-native-community/datetimepicker';
 import * as ImagePicker from 'expo-image-picker';
@@ -12,6 +22,7 @@ import QRCode from 'react-native-qrcode-svg';
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
+import * as Calendar from 'expo-calendar';
 import { io } from 'socket.io-client';
 import { LinearGradient } from 'expo-linear-gradient';
 
@@ -21,10 +32,11 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // ── JWT Fetch Interceptor ──
 const originalFetch = global.fetch;
 global.fetch = async (url, options = {}) => {
-  if (typeof url === 'string' && url.includes(process.env.EXPO_PUBLIC_SERVER_IP) && global.jwtToken) {
+  const token = useAuthStore.getState().token;
+  if (typeof url === 'string' && url.includes(process.env.EXPO_PUBLIC_SERVER_IP) && token) {
     options.headers = {
-      ...(options.headers || {}),
-      'Authorization': 'Bearer ' + global.jwtToken
+      ...options.headers,
+      'Authorization': 'Bearer ' + token
     };
   }
   return originalFetch(url, options);
@@ -263,12 +275,12 @@ function LoginScreen({ navigation }) {
       });
       const data = await r.json();
       if (data.success) {
-        if (data.token) global.jwtToken = data.token;
-        if (data.user?.profile_picture_url) global.userPic = data.user.profile_picture_url;
+        if (data.token) useAuthStore.getState().setToken(data.token);
+        if (data.user) useAuthStore.getState().setUser(data.user);
         
         if (isLoginMode) {
           const dest = data.user.role === 'student' ? 'Student' : data.user.role === 'admin' ? 'Admin' : 'Organizer';
-          navigation.replace(dest, { userName: data.user.name, userId: data.user.id });
+          navigation.replace(dest);
         } else {
           Alert.alert('Account created! ✨', data.message);
           setIsLoginMode(true);
@@ -378,9 +390,35 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isWishlistOpen, setIsWishlistOpen] = useState(false);
   const [wishlistEvents, setWishlistEvents] = useState([]);
-  const [profilePic, setProfilePic] = useState(global.userPic || null);
+  const profilePic = useAuthStore(state => state.user?.profile_picture_url || null);
+  const updateProfilePic = useAuthStore(state => state.updateProfilePic);
   const [isUploading, setIsUploading] = useState(false);
   const API_URL = process.env.EXPO_PUBLIC_API_URL;
+  const [feedbackModalEvent, setFeedbackModalEvent] = useState(null);
+  const [feedbackRating, setFeedbackRating] = useState(0);
+  const [feedbackComment, setFeedbackComment] = useState('');
+  const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false);
+  const [submittedEventIds, setSubmittedEventIds] = useState(new Set());
+
+  const handleSubmitFeedback = async () => {
+    if (feedbackRating === 0) { Alert.alert('Please select a rating!'); return; }
+    setIsSubmittingFeedback(true);
+    try {
+      const r = await fetch(`${API_URL}/events/${feedbackModalEvent.event_id}/feedback`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: userId, rating: feedbackRating, comments: feedbackComment }),
+      });
+      const d = await r.json();
+      Alert.alert(d.success ? '🌟 Thanks!' : 'Oops!', d.message);
+      if (d.success) {
+        setSubmittedEventIds(prev => new Set([...prev, feedbackModalEvent.event_id]));
+        setFeedbackModalEvent(null);
+        setFeedbackRating(0);
+        setFeedbackComment('');
+      }
+    } catch (_) { Alert.alert('Error', 'Could not submit feedback.'); }
+    finally { setIsSubmittingFeedback(false); }
+  };
 
   useEffect(() => {
     if (userId) {
@@ -420,8 +458,7 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
 
       const data = await response.json();
       if (data.success) {
-        setProfilePic(data.url);
-        global.userPic = data.url; // Update globally so header reflects it immediately
+        updateProfilePic(data.url);
       } else {
         Alert.alert('Error', data.message || 'Failed to upload profile picture');
       }
@@ -551,19 +588,73 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
             <Text style={{ color: C.purple, fontSize: 14, fontWeight: '600' }}>{isHistoryOpen ? 'Hide' : 'Show'}</Text>
           </TouchableOpacity>
           {isHistoryOpen && pastTickets.map((t, i) => (
-            <Card key={i} style={{ marginBottom: 8, padding: 14, flexDirection: 'row', alignItems: 'center' }}>
-              <View style={{ flex: 1 }}>
-                <Text style={styles.cardTitle}>{t.title}</Text>
-                <Text style={styles.cardMeta}>{new Date(t.date).toLocaleDateString()} · {t.venue}</Text>
+            <Card key={i} style={{ marginBottom: 10, padding: 14 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.cardTitle}>{t.title}</Text>
+                  <Text style={styles.cardMeta}>{new Date(t.date).toLocaleDateString()} \u00b7 {t.venue}</Text>
+                </View>
+                {t.attended === 1
+                  ? <View style={styles.attendedBadge}><Text style={styles.attendedBadgeText}>Attended</Text></View>
+                  : <View style={styles.missedBadge}><Text style={styles.missedBadgeText}>Missed</Text></View>
+                }
               </View>
-              {t.attended === 1
-                ? <View style={styles.attendedBadge}><Text style={styles.attendedBadgeText}>Attended</Text></View>
-                : <View style={styles.missedBadge}><Text style={styles.missedBadgeText}>Missed</Text></View>
-              }
+              <TouchableOpacity
+                onPress={() => { setFeedbackModalEvent(t); setFeedbackRating(0); setFeedbackComment(''); }}
+                disabled={!!t.has_feedback || submittedEventIds.has(t.event_id)}
+                style={{ marginTop: 10, backgroundColor: (t.has_feedback || submittedEventIds.has(t.event_id)) ? '#F3F4F6' : '#EDE9FE', borderRadius: 12, paddingVertical: 10, alignItems: 'center', borderWidth: 1, borderColor: (t.has_feedback || submittedEventIds.has(t.event_id)) ? '#D1D5DB' : '#C4B5FD' }}
+              >
+                <Text style={{ color: (t.has_feedback || submittedEventIds.has(t.event_id)) ? '#6B7280' : '#6D28D9', fontWeight: '700', fontSize: 13 }}>
+                  {(t.has_feedback || submittedEventIds.has(t.event_id)) ? '✅ Feedback Sent' : '⭐ Rate this Event'}
+                </Text>
+              </TouchableOpacity>
             </Card>
           ))}
         </View>
       )}
+
+      {/* ── Feedback Submission Modal ── */}
+      <Modal visible={!!feedbackModalEvent} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setFeedbackModalEvent(null)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setFeedbackModalEvent(null)} style={styles.modalCloseBtn}>
+              <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle} numberOfLines={1}>Rate Event</Text>
+            <View style={{ width: 48 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 24 }}>
+            <Text style={{ fontSize: 18, fontWeight: '800', color: C.text, marginBottom: 4 }}>{feedbackModalEvent?.title}</Text>
+            <Text style={{ fontSize: 13, color: C.textSub, marginBottom: 28 }}>Your feedback is completely anonymous and goes straight to the organizer.</Text>
+
+            <Text style={{ fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 14 }}>Your Rating</Text>
+            <View style={{ flexDirection: 'row', gap: 12, marginBottom: 28 }}>
+              {[1,2,3,4,5].map(star => (
+                <TouchableOpacity key={star} onPress={() => setFeedbackRating(star)} style={{ alignItems: 'center', flex: 1 }}>
+                  <Text style={{ fontSize: 36, opacity: star <= feedbackRating ? 1 : 0.2 }}>⭐</Text>
+                  <Text style={{ fontSize: 11, color: star <= feedbackRating ? C.purple : C.textMuted, fontWeight: '700', marginTop: 2 }}>{star}</Text>
+                </TouchableOpacity>
+              ))}
+            </View>
+
+            <Text style={{ fontSize: 15, fontWeight: '700', color: C.text, marginBottom: 10 }}>Comments (optional)</Text>
+            <TextInput
+              value={feedbackComment}
+              onChangeText={setFeedbackComment}
+              placeholder="What did you love? What could be improved?"
+              placeholderTextColor={C.textMuted}
+              multiline
+              numberOfLines={4}
+              style={{ backgroundColor: C.bgSection, borderRadius: 16, padding: 16, color: C.text, fontSize: 14, borderWidth: 1, borderColor: C.border, minHeight: 110, textAlignVertical: 'top', marginBottom: 28 }}
+            />
+            <PurpleButton
+              label={isSubmittingFeedback ? 'Submitting...' : 'Submit Feedback 🌟'}
+              onPress={handleSubmitFeedback}
+              disabled={isSubmittingFeedback || feedbackRating === 0}
+            />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
 
       {/* Settings */}
       <View style={{ paddingHorizontal: 20, marginTop: 24 }}>
@@ -687,7 +778,9 @@ function CalendarMini({ events, selectedDate, onSelectDate }) {
 
 // ─── STUDENT DASHBOARD ────────────────────────────────────────────────
 function StudentDashboard({ route, navigation }) {
-  const { userName, userId } = route.params;
+  const user = useAuthStore(state => state.user);
+  const userName = user?.name || '';
+  const userId = user?.id || '';
   const [events, setEvents] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [myTickets, setMyTickets] = useState([]);
@@ -739,6 +832,12 @@ function StudentDashboard({ route, navigation }) {
     const socket = io(SOCKET_URL);
     socket.on('new_event_alert', data => { Alert.alert('🚨 Live Drop!', data.message); fetchNotifications(); });
     socket.on('new_event_query', q => setEventQueries(prev => [...prev, q]));
+    socket.on('waitlist_promoted', data => { 
+      if (data.student_id === userId) {
+        Alert.alert('🎉 Waitlist Promoted!', data.message);
+        fetchMyTickets();
+      }
+    });
     return () => socket.disconnect();
   }, []);
 
@@ -843,9 +942,47 @@ function StudentDashboard({ route, navigation }) {
         body: JSON.stringify({ user_id: userId, event_id: eventId }),
       });
       const d = await r.json();
-      Alert.alert(d.success ? "You're In! 🎉" : 'Heads up', d.message);
+      Alert.alert(d.success ? (d.waitlisted ? "Waitlisted! ⏳" : "You're In! 🎉") : 'Heads up', d.message);
       if (d.success) fetchMyTickets();
     } catch (_) { }
+  };
+
+  const handleAddToCalendar = async (event) => {
+    const { status } = await Calendar.requestCalendarPermissionsAsync();
+    if (status !== 'granted') {
+      Alert.alert('Permission needed', 'Calendar permission is required to add events.');
+      return;
+    }
+    try {
+      const calendars = await Calendar.getCalendarsAsync(Calendar.EntityTypes.EVENT);
+      
+      // Try to find their Google Calendar first, then primary, then any modifiable one
+      const defaultCalendar = 
+        calendars.find(cal => cal.allowsModifications && cal.source && cal.source.name && cal.source.name.includes('@')) ||
+        calendars.find(cal => cal.allowsModifications && cal.isPrimary) || 
+        calendars.find(cal => cal.allowsModifications) || 
+        calendars[0];
+
+      if (!defaultCalendar) {
+        Alert.alert('Error', 'No accessible calendar found on your device.');
+        return;
+      }
+      const startDate = new Date(event.date);
+      const endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000); // Assume 2 hours
+      const localTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'GMT';
+
+      await Calendar.createEventAsync(defaultCalendar.id, {
+        title: event.title,
+        startDate,
+        endDate,
+        location: event.venue,
+        notes: event.description,
+        timeZone: localTimeZone,
+      });
+      Alert.alert('Success! 📅', 'Event added to your calendar.');
+    } catch (e) {
+      Alert.alert('Error', 'Could not add event to calendar.');
+    }
   };
 
   const handleCancelRegistration = (regId) => {
@@ -1157,7 +1294,7 @@ function StudentDashboard({ route, navigation }) {
               </TouchableOpacity>
             )}
             <TouchableOpacity onPress={() => setViewMode('profile')} activeOpacity={0.8} style={{ alignItems: 'center' }}>
-              <Avatar name={userName} size={36} fontSize={13} url={global.userPic} />
+              <Avatar name={userName} size={36} fontSize={13} url={user?.profile_picture_url} />
               <Text style={{ fontSize: 10, color: C.text, fontWeight: '700', marginTop: 4 }}>{userName.split(' ')[0]}</Text>
             </TouchableOpacity>
           </View>
@@ -1380,9 +1517,7 @@ function StudentDashboard({ route, navigation }) {
                   )}
 
                   {ctaState === 'full' && (
-                    <View style={{ backgroundColor: '#FEF2F2', borderRadius: 16, paddingVertical: 16, alignItems: 'center', borderWidth: 1, borderColor: '#FECACA' }}>
-                      <Text style={{ fontWeight: '800', color: C.accentRed, fontSize: 16 }}>🚫 Event is Full</Text>
-                    </View>
+                    <PurpleButton label="Join Waitlist ⏳" icon="🎫" onPress={() => handleRegister(selectedEvent.event_id)} style={{ backgroundColor: '#4B5563' }} />
                   )}
 
                   {ctaState === 'registered' && (
@@ -1390,6 +1525,14 @@ function StudentDashboard({ route, navigation }) {
                       <View style={{ backgroundColor: '#ECFDF5', borderRadius: 16, paddingVertical: 12, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#A7F3D0' }}>
                         <Text style={{ fontWeight: '800', color: '#059669', fontSize: 16 }}>✅ You're on the guest list!</Text>
                       </View>
+                      
+                      <TouchableOpacity
+                        onPress={() => handleAddToCalendar(selectedEvent)}
+                        style={{ backgroundColor: '#E0E7FF', borderRadius: 16, paddingVertical: 14, alignItems: 'center', marginBottom: 12, borderWidth: 1, borderColor: '#C7D2FE' }}
+                      >
+                        <Text style={{ color: '#4338CA', fontWeight: '800', fontSize: 14 }}>📅 Add to Calendar</Text>
+                      </TouchableOpacity>
+
                       <View style={{ flexDirection: 'row', gap: 10 }}>
                         <TouchableOpacity
                           onPress={() => { setIsDetailsModalVisible(false); setViewMode('tickets'); }}
@@ -1670,7 +1813,9 @@ function OrganizerStorefront({ userId }) {
 
 // ─── ORGANIZER DASHBOARD ──────────────────────────────────────────────
 function OrganizerDashboard({ route, navigation }) {
-  const { userName, userId } = route.params;
+  const user = useAuthStore(state => state.user);
+  const userName = user?.name || '';
+  const userId = user?.id || '';
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [venue, setVenue] = useState('');
@@ -1703,7 +1848,10 @@ function OrganizerDashboard({ route, navigation }) {
   const [isAttendeesVisible, setIsAttendeesVisible] = useState(false);
   const [selectedEventTitle, setSelectedEventTitle] = useState('');
   const [attendeesList, setAttendeesList] = useState([]);
-  const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
+  const [replyingTo, setReplyingTo] = useState(null);
+  const [isFeedbackVisible, setIsFeedbackVisible] = useState(false);
+  const [feedbackData, setFeedbackData] = useState({ average_rating: 0, feedback: [] });
+  const [feedbackEventTitle, setFeedbackEventTitle] = useState('');
 
   const API_URL = process.env.EXPO_PUBLIC_API_URL;
   const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL;
@@ -1817,6 +1965,15 @@ function OrganizerDashboard({ route, navigation }) {
       const d = await r.json();
       if (d.success) { setAttendeesList(d.attendees); setSelectedEventTitle(eventTitle); setIsAttendeesVisible(true); }
     } catch (_) { }
+  };
+
+  const viewFeedback = async (eventId, eventTitle) => {
+    try {
+      const r = await fetch(`${API_URL}/events/${eventId}/feedback`);
+      const d = await r.json();
+      if (d.success) { setFeedbackData(d); setFeedbackEventTitle(eventTitle); setIsFeedbackVisible(true); }
+      else Alert.alert('Error', d.message || 'Could not load feedback.');
+    } catch (_) { Alert.alert('Error', 'Network error loading feedback.'); }
   };
 
   const exportToCSV = async () => {
@@ -2041,6 +2198,44 @@ function OrganizerDashboard({ route, navigation }) {
             })
           }
 
+          {/* ── Feedback Viewer Modal (Organizer) ── */}
+          <Modal visible={isFeedbackVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setIsFeedbackVisible(false)}>
+            <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+              <View style={styles.modalNav}>
+                <TouchableOpacity onPress={() => setIsFeedbackVisible(false)} style={styles.modalCloseBtn}>
+                  <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>×</Text>
+                </TouchableOpacity>
+                <Text style={styles.modalTitle} numberOfLines={1}>Feedback</Text>
+                <View style={{ width: 48 }} />
+              </View>
+              <ScrollView contentContainerStyle={{ padding: 20 }}>
+                <View style={{ backgroundColor: '#F5F3FF', borderRadius: 20, padding: 20, alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: '#DDD6FE' }}>
+                  <Text style={{ fontSize: 13, color: C.textSub, fontWeight: '600', marginBottom: 4 }}>AVERAGE RATING</Text>
+                  <Text style={{ fontSize: 52, fontWeight: '900', color: C.purple }}>{feedbackData.average_rating || '–'}</Text>
+                  <Text style={{ fontSize: 22, marginTop: 4 }}>
+                    {[1,2,3,4,5].map(s => s <= Math.round(feedbackData.average_rating) ? '⭐' : '☆').join('')}
+                  </Text>
+                  <Text style={{ color: C.textMuted, fontSize: 13, marginTop: 6 }}>{feedbackData.feedback?.length || 0} responses for "{feedbackEventTitle}"</Text>
+                </View>
+                {(feedbackData.feedback?.length === 0) && (
+                  <Text style={{ color: C.textMuted, textAlign: 'center', marginTop: 20, fontSize: 15 }}>No feedback received yet.</Text>
+                )}
+                {feedbackData.feedback?.map((fb, i) => (
+                  <Card key={i} style={{ marginBottom: 12, padding: 16 }}>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <Text style={{ fontSize: 18 }}>{[1,2,3,4,5].map(s => s <= fb.rating ? '⭐' : '☆').join('')}</Text>
+                      <Text style={{ color: C.textMuted, fontSize: 12 }}>{new Date(fb.created_at).toLocaleDateString()}</Text>
+                    </View>
+                    {fb.comments
+                      ? <Text style={{ color: C.text, fontSize: 14, lineHeight: 20 }}>"{ fb.comments}"</Text>
+                      : <Text style={{ color: C.textMuted, fontSize: 13, fontStyle: 'italic' }}>No written comment.</Text>
+                    }
+                  </Card>
+                ))}
+              </ScrollView>
+            </SafeAreaView>
+          </Modal>
+
           {/* Attendees modal */}
           <Modal visible={isAttendeesVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setIsAttendeesVisible(false)}>
             <SafeAreaView style={{ flex: 1, backgroundColor: C.bgCard }}>
@@ -2206,7 +2401,8 @@ function OrganizerDashboard({ route, navigation }) {
 
 // ─── ADMIN DASHBOARD ──────────────────────────────────────────────────
 function AdminDashboard({ route, navigation }) {
-  const { userName } = route.params;
+  const user = useAuthStore(state => state.user);
+  const userName = user?.name || '';
   const [viewMode, setViewMode] = useState('stats');
   const [users, setUsers] = useState([]);
   const [events, setEvents] = useState([]);
