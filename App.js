@@ -21,7 +21,7 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // ── JWT Fetch Interceptor ──
 const originalFetch = global.fetch;
 global.fetch = async (url, options = {}) => {
-  if (typeof url === 'string' && url.includes('172.18.12.100') && global.jwtToken) {
+  if (typeof url === 'string' && url.includes(process.env.EXPO_PUBLIC_SERVER_IP) && global.jwtToken) {
     options.headers = {
       ...(options.headers || {}),
       'Authorization': 'Bearer ' + global.jwtToken
@@ -229,7 +229,7 @@ function LoginScreen({ navigation }) {
 
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
-  const API_URL = 'http://172.18.12.100:3000/api';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
   const CLUB_ROLES = ['President', 'Vice President', 'Coordinator', 'Core Member'];
   const DEPARTMENTS = ['Computer Science', 'Mechanical', 'Electronics', 'Business', 'Arts'];
@@ -380,7 +380,7 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
   const [wishlistEvents, setWishlistEvents] = useState([]);
   const [profilePic, setProfilePic] = useState(global.userPic || null);
   const [isUploading, setIsUploading] = useState(false);
-  const API_URL = 'http://172.18.12.100:3000/api';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
   useEffect(() => {
     if (userId) {
@@ -415,10 +415,7 @@ function ProfileScreen({ userName, userId, tickets, savedEventIds = [], onToggle
 
       const response = await fetch(`${API_URL}/users/${userId}/avatar`, {
         method: 'POST',
-        body: formData,
-        headers: {
-          // Authorization will be added by our global fetch interceptor
-        }
+        body: formData
       });
 
       const data = await response.json();
@@ -712,9 +709,10 @@ function StudentDashboard({ route, navigation }) {
   const [likedEventIds, setLikedEventIds] = useState({});  // { event_id: likeCount }
   const [trendingEvents, setTrendingEvents] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
+  const [selectedQrTicket, setSelectedQrTicket] = useState(null);
 
-  const API_URL = 'http://172.18.12.100:3000/api';
-  const SOCKET_URL = 'http://172.18.12.100:3000';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
+  const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL;
 
   const groupedNotifications = useMemo(() => {
     const groups = {};
@@ -1081,14 +1079,16 @@ function StudentDashboard({ route, navigation }) {
           <Text style={styles.ticketTitle}>{item.title}</Text>
           <Text style={styles.cardMeta}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</Text>
           <Text style={styles.cardMeta}>📍 {item.venue}</Text>
-          <View style={styles.qrSection}>
-            <Text style={styles.qrLabel}>Show at the door</Text>
-            <View style={styles.qrFrame}>
-              <QRCode value={item.registration_id.toString()} size={160} color={C.purple} backgroundColor="transparent" />
-            </View>
-            <View style={[styles.ticketIdPill, { backgroundColor: C.bgSection }]}>
+          <View style={{ alignItems: 'center', marginVertical: 16 }}>
+            <View style={[styles.ticketIdPill, { backgroundColor: C.bgSection, marginBottom: 16 }]}>
               <Text style={[styles.ticketIdText, { color: C.purple }]}>Ticket #{item.registration_id}</Text>
             </View>
+            <PurpleButton 
+              label="View QR Code" 
+              icon="📱" 
+              onPress={() => setSelectedQrTicket(item)} 
+              style={{ width: '100%' }} 
+            />
           </View>
           <PurpleButton label="Withdraw Ticket" onPress={() => handleCancelRegistration(item.registration_id)}
             style={{ marginTop: 12 }} outline />
@@ -1134,6 +1134,7 @@ function StudentDashboard({ route, navigation }) {
   const STUDENT_TABS = [
     { key: 'events', icon: '✦', label: 'Discover' },
     { key: 'tickets', icon: '🎟', label: 'Tickets' },
+    { key: 'search', icon: '🔍', label: 'Search' },
     { key: 'alerts', icon: '🔔', label: 'Alerts', badge: unreadCount > 0 ? unreadCount : null },
     { key: 'profile', icon: '👤', label: 'Profile' },
   ];
@@ -1155,8 +1156,9 @@ function StudentDashboard({ route, navigation }) {
                 <View style={styles.bellBadge}><Text style={styles.navBadgeText}>{unreadCount}</Text></View>
               </TouchableOpacity>
             )}
-            <TouchableOpacity onPress={() => setViewMode('profile')} activeOpacity={0.8}>
+            <TouchableOpacity onPress={() => setViewMode('profile')} activeOpacity={0.8} style={{ alignItems: 'center' }}>
               <Avatar name={userName} size={36} fontSize={13} url={global.userPic} />
+              <Text style={{ fontSize: 10, color: C.text, fontWeight: '700', marginTop: 4 }}>{userName.split(' ')[0]}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -1171,23 +1173,6 @@ function StudentDashboard({ route, navigation }) {
       {/* Discover filters */}
       {viewMode === 'events' && (
         <View style={{ paddingHorizontal: 20, marginBottom: 8 }}>
-          {/* Greeting */}
-          <Text style={styles.greeting}>Hey, {userName.split(' ')[0]} 👋</Text>
-          <Text style={styles.greetingSub}>Discover what's happening on campus</Text>
-
-          {/* Search bar */}
-          <View style={[styles.searchBar, { marginTop: 14 }]}>
-            <Text style={{ color: C.textMuted, fontSize: 16, marginRight: 8 }}>🔍</Text>
-            <TextInput style={styles.searchInput} placeholder="Search events..." placeholderTextColor={C.textMuted}
-              value={searchQuery} onChangeText={setSearchQuery} />
-            <TouchableOpacity onPress={() => { setIsCalendarOpen(p => !p); if (isCalendarOpen) setSelectedCalDate(null); }}
-              style={[styles.calBtn, isCalendarOpen && { backgroundColor: C.purple }]}>
-              <Text style={{ fontSize: 15 }}>📅</Text>
-            </TouchableOpacity>
-          </View>
-
-          {isCalendarOpen && <CalendarMini events={events} selectedDate={selectedCalDate} onSelectDate={setSelectedCalDate} />}
-
           {/* Category pills */}
           <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 12 }}
             contentContainerStyle={{ gap: 8, paddingRight: 4 }}>
@@ -1197,6 +1182,26 @@ function StudentDashboard({ route, navigation }) {
                 active={selectedCategory === cat.label} onPress={() => setSelectedCategory(cat.label)} color={cat.color} />
             ))}
           </ScrollView>
+        </View>
+      )}
+
+      {/* Search Tab */}
+      {viewMode === 'search' && (
+        <View style={{ paddingHorizontal: 20, paddingTop: 8, paddingBottom: 12 }}>
+          <Text style={styles.greeting}>Search Events 🔍</Text>
+          <Text style={styles.greetingSub}>Find specific events or filter by date</Text>
+          
+          <View style={[styles.searchBar, { marginTop: 14 }]}>
+            <Text style={{ color: C.textMuted, fontSize: 16, marginRight: 8 }}>🔍</Text>
+            <TextInput style={styles.searchInput} placeholder="Search events..." placeholderTextColor={C.textMuted}
+              value={searchQuery} onChangeText={setSearchQuery} autoFocus={true} />
+            <TouchableOpacity onPress={() => { setIsCalendarOpen(p => !p); if (isCalendarOpen) setSelectedCalDate(null); }}
+              style={[styles.calBtn, isCalendarOpen && { backgroundColor: C.purple }]}>
+              <Text style={{ fontSize: 15 }}>📅</Text>
+            </TouchableOpacity>
+          </View>
+
+          {isCalendarOpen && <CalendarMini events={events} selectedDate={selectedCalDate} onSelectDate={setSelectedCalDate} />}
         </View>
       )}
 
@@ -1227,9 +1232,9 @@ function StudentDashboard({ route, navigation }) {
           )
           : (
             <FlatList
-              data={viewMode === 'events' ? filteredEvents : viewMode === 'tickets' ? myTickets.filter(t => !t.attended) : groupedNotifications}
-              keyExtractor={item => viewMode === 'events' ? item.event_id.toString() : viewMode === 'tickets' ? item.registration_id.toString() : item.eventName}
-              renderItem={viewMode === 'events' ? renderEvent : viewMode === 'tickets' ? renderTicket : renderAlertGroup}
+              data={(viewMode === 'events' || viewMode === 'search') ? filteredEvents : viewMode === 'tickets' ? myTickets.filter(t => !t.attended) : groupedNotifications}
+              keyExtractor={item => (viewMode === 'events' || viewMode === 'search') ? item.event_id.toString() : viewMode === 'tickets' ? item.registration_id.toString() : item.eventName}
+              renderItem={(viewMode === 'events' || viewMode === 'search') ? renderEvent : viewMode === 'tickets' ? renderTicket : renderAlertGroup}
               contentContainerStyle={{ paddingHorizontal: 20, paddingBottom: 100, paddingTop: 4 }}
               showsVerticalScrollIndicator={false}
               refreshControl={<RefreshControl refreshing={isRefreshing} onRefresh={onRefresh} tintColor={C.purple} colors={[C.purple]} />}
@@ -1279,13 +1284,13 @@ function StudentDashboard({ route, navigation }) {
               ListEmptyComponent={
                 <View style={styles.emptyState}>
                   <Text style={{ fontSize: 52, marginBottom: 12 }}>
-                    {viewMode === 'events' ? '🎪' : viewMode === 'tickets' ? '🎟️' : '🔔'}
+                    {viewMode === 'events' ? '🎪' : viewMode === 'search' ? '🔍' : viewMode === 'tickets' ? '🎟️' : '🔔'}
                   </Text>
                   <Text style={styles.emptyStateTitle}>
-                    {viewMode === 'events' ? 'No events found' : viewMode === 'tickets' ? 'No tickets yet' : 'All caught up!'}
+                    {viewMode === 'events' ? 'No events found' : viewMode === 'search' ? 'No results found' : viewMode === 'tickets' ? 'No tickets yet' : 'All caught up!'}
                   </Text>
                   <Text style={styles.emptyStateSub}>
-                    {viewMode === 'events' ? 'Try a different filter' : viewMode === 'tickets' ? 'Register for an event to get started' : 'No new alerts'}
+                    {viewMode === 'events' ? 'Try a different filter' : viewMode === 'search' ? 'Try different keywords' : viewMode === 'tickets' ? 'Register for an event to get started' : 'No new alerts'}
                   </Text>
                 </View>
               }
@@ -1479,6 +1484,33 @@ function StudentDashboard({ route, navigation }) {
         </Modal>
       );
       })()}
+      {/* Fullscreen QR Modal */}
+      {selectedQrTicket && (
+        <Modal visible={true} transparent={true} animationType="fade" onRequestClose={() => setSelectedQrTicket(null)}>
+          <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.95)', justifyContent: 'center', alignItems: 'center' }}>
+            <TouchableOpacity 
+              onPress={() => setSelectedQrTicket(null)} 
+              style={{ position: 'absolute', top: 50, right: 20, zIndex: 10, padding: 10 }}
+            >
+              <Text style={{ color: '#FFF', fontSize: 28, fontWeight: '800' }}>✕</Text>
+            </TouchableOpacity>
+            
+            <View style={{ backgroundColor: '#FFF', borderRadius: 32, padding: 32, alignItems: 'center', width: '85%', shadowColor: C.purple, shadowOffset: { width: 0, height: 20 }, shadowOpacity: 0.3, shadowRadius: 30, elevation: 10 }}>
+              <Text style={{ fontSize: 22, fontWeight: '900', color: C.text, marginBottom: 6, textAlign: 'center' }}>{selectedQrTicket.title}</Text>
+              <Text style={{ fontSize: 14, color: C.textSub, marginBottom: 30, textAlign: 'center', fontWeight: '600' }}>Show this at the entrance</Text>
+              
+              <View style={styles.qrFrame}>
+                <QRCode value={selectedQrTicket.registration_id.toString()} size={220} color={C.purple} backgroundColor="transparent" />
+              </View>
+              
+              <View style={[styles.ticketIdPill, { backgroundColor: C.bgSection, marginTop: 30, paddingHorizontal: 20, paddingVertical: 10 }]}>
+                <Text style={[styles.ticketIdText, { color: C.purple, fontSize: 16 }]}>Ticket #{selectedQrTicket.registration_id}</Text>
+              </View>
+            </View>
+          </View>
+        </Modal>
+      )}
+
     </View>
   );
 }
@@ -1494,7 +1526,7 @@ function OrganizerStorefront({ userId }) {
   const [galleryCaption, setGalleryCaption] = useState('');
   const [isPhotoModalOpen, setIsPhotoModalOpen] = useState(false);
   const [newPhotoUri, setNewPhotoUri] = useState(null);
-  const API_URL = 'http://172.18.12.100:3000/api';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
   useEffect(() => {
     fetchProfile();
@@ -1673,8 +1705,8 @@ function OrganizerDashboard({ route, navigation }) {
   const [attendeesList, setAttendeesList] = useState([]);
   const [replyingTo, setReplyingTo] = useState(null); // Track message being replied to
 
-  const API_URL = 'http://172.18.12.100:3000/api';
-  const SOCKET_URL = 'http://172.18.12.100:3000';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
+  const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL;
 
   useEffect(() => {
     if (viewMode === 'stats') fetchStats();
@@ -2180,7 +2212,7 @@ function AdminDashboard({ route, navigation }) {
   const [events, setEvents] = useState([]);
   const [stats, setStats] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
-  const API_URL = 'http://172.18.12.100:3000/api';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
   const ADMIN_TABS = [
     { key: 'stats', icon: '📊', label: 'Analytics' },
@@ -2458,7 +2490,7 @@ function ClubProfileScreen({ route, navigation }) {
   const [mutualFriends, setMutualFriends] = useState([]);
   const [pastEvents, setPastEvents] = useState([]);
   const [activeTab, setActiveTab] = useState('gallery'); // 'gallery' or 'history'
-  const API_URL = 'http://172.18.12.100:3000/api';
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
 
   useEffect(() => {
     fetch(`${API_URL}/clubs/${orgId}`).then(r => r.json()).then(d => { if (d.success) setProfile(d.profile) });

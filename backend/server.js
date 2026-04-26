@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2');
 const cors = require('cors');
@@ -5,7 +6,7 @@ const multer = require('multer'); // NEW: Handles physical file uploads
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
-const JWT_SECRET = 'supersecretkey123';
+const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
 
 const { Server } = require("socket.io"); // NEW
 const http = require("http"); // NEW
@@ -37,10 +38,10 @@ const upload = multer({ storage: storage });
 
 // Database Connection
 const db = mysql.createConnection({
-  host: 'localhost',
-  user: 'root',
-  password: 'root',
-  database: 'ClubCascade'
+  host: process.env.DB_HOST || 'localhost',
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || 'root',
+  database: process.env.DB_NAME || 'ClubCascade'
 });
 
 db.connect((err) => {
@@ -103,7 +104,7 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), (req, res) => {
   const userId = req.params.id;
   if (!req.file) return res.status(400).json({ success: false, message: 'No image uploaded' });
   
-  const imageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
+  const imageUrl = `http://${process.env.SERVER_IP || '10.169.91.100'}:${process.env.PORT || 3000}/uploads/${req.file.filename}`;
   
   const sql = 'UPDATE users SET profile_picture_url = ? WHERE id = ?';
   db.query(sql, [imageUrl, userId], (err) => {
@@ -181,8 +182,9 @@ app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req,
     }
 
     let finalImageUrl = req.body.image_url || null;
+    const serverIp = process.env.SERVER_IP || '10.169.91.100';
     if (req.file) {
-      finalImageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
+      finalImageUrl = `http://${serverIp}:${process.env.PORT || 3000}/uploads/${req.file.filename}`;
     }
 
     const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ?, date = ? WHERE event_id = ?';
@@ -249,7 +251,7 @@ app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => 
     // If a physical file was uploaded from the gallery, generate the exact URL for it
     let finalImageUrl = req.body.image_url || null;
     if (req.file) {
-      finalImageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
+      finalImageUrl = `http://${process.env.SERVER_IP || '10.169.91.100'}:${process.env.PORT || 3000}/uploads/${req.file.filename}`;
       console.log("-> Successfully saved gallery image locally:", req.file.filename);
     }
 
@@ -357,15 +359,17 @@ app.get('/api/tickets/:user_id', verifyToken, (req, res) => {
 app.post('/api/checkin', verifyOrganizer, (req, res) => {
   const { registration_id } = req.body;
 
-  // We simply flip the `attended` switch from FALSE to TRUE!
   const sqlQuery = 'UPDATE registrations SET attended = TRUE WHERE registration_id = ?';
 
   db.query(sqlQuery, [registration_id], (err, result) => {
     if (err) return res.status(500).json({ success: false, message: 'Database error' });
 
-    // Safety check just in case they scanned an invalid or non-existent QR ticket
     if (result.affectedRows === 0) {
       return res.json({ success: false, message: 'Invalid Ticket! Not found in system.' });
+    }
+
+    if (result.changedRows === 0) {
+      return res.json({ success: false, message: 'Ticket already scanned! This QR code has expired ❌' });
     }
 
     res.json({ success: true, message: `Ticket Scanned! Student #${registration_id} marked as Attended! ✅` });
@@ -704,13 +708,15 @@ app.put('/api/clubs/profile', verifyOrganizer, upload.fields([{ name: 'logo', ma
   const bio = req.body.bio || '';
   const instagram_handle = req.body.instagram_handle || '';
   
+  const serverIp = process.env.SERVER_IP || '10.169.91.100';
   let finalLogo = req.body.logo_url || null;
-  if(req.files && req.files.logo) {
-      finalLogo = `http://172.18.12.100:3000/uploads/${req.files.logo[0].filename}`;
-  }
   let finalBanner = req.body.banner_url || null;
-  if(req.files && req.files.banner) {
-      finalBanner = `http://172.18.12.100:3000/uploads/${req.files.banner[0].filename}`;
+
+  if (req.files && req.files.logo && req.files.logo.length > 0) {
+    finalLogo = `http://${serverIp}:${process.env.PORT || 3000}/uploads/${req.files.logo[0].filename}`;
+  }
+  if (req.files && req.files.banner && req.files.banner.length > 0) {
+    finalBanner = `http://${serverIp}:${process.env.PORT || 3000}/uploads/${req.files.banner[0].filename}`;
   }
 
   db.query('SELECT * FROM club_profiles WHERE organizer_id = ?', [organizerId], (err, results) => {
@@ -789,7 +795,7 @@ app.get('/api/clubs/:org_id/photos', verifyToken, (req, res) => {
 app.post('/api/clubs/photos', verifyOrganizer, upload.single('photo'), (req, res) => {
   if (!req.file) return res.json({ success: false, message: 'No photo uploaded!' });
   const organizerId = req.user.id;
-  const imageUrl = `http://172.18.12.100:3000/uploads/${req.file.filename}`;
+  const imageUrl = `http://${process.env.SERVER_IP || '10.169.91.100'}:${process.env.PORT || 3000}/uploads/${req.file.filename}`;
   const caption = req.body.caption || '';
 
   db.query('INSERT INTO club_photos (organizer_id, image_url, caption) VALUES (?, ?, ?)', [organizerId, imageUrl, caption], (err) => {
@@ -907,6 +913,7 @@ app.get('/api/events/:id/likes', verifyToken, (req, res) => {
 // ===================================================================
 
 // We must call `server.listen` instead of `app.listen` so WebSockets and HTTP work identically together!
-server.listen(3000, '0.0.0.0', () => {
-  console.log('🚀 Real-Time WebSockets Server running on port 3000');
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Real-Time WebSockets Server running on port ${PORT}`);
 });
