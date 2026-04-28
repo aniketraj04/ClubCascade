@@ -1856,6 +1856,272 @@ function OrganizerStorefront({ userId }) {
   );
 }
 
+// ─── ORGANIZER PROFILE TAB ────────────────────────────────────────────
+function OrganizerProfileTab({ userId, userName, navigation }) {
+  const logout = useAuthStore(state => state.logout);
+  const API_URL = process.env.EXPO_PUBLIC_API_URL;
+
+  const [profile, setProfile] = useState({});
+  const [isLoading, setIsLoading] = useState(true);
+  const [isEditVisible, setIsEditVisible] = useState(false);
+  const [isPasswordVisible, setIsPasswordVisible] = useState(false);
+
+  // Edit fields
+  const [bio, setBio] = useState('');
+  const [insta, setInsta] = useState('');
+  const [whatsapp, setWhatsapp] = useState('');
+  const [photoUri, setPhotoUri] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+
+  // Password fields
+  const [currentPw, setCurrentPw] = useState('');
+  const [newPw, setNewPw] = useState('');
+  const [confirmPw, setConfirmPw] = useState('');
+  const [isChangingPw, setIsChangingPw] = useState(false);
+
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    fetchProfile();
+  }, []);
+
+  const fetchProfile = async () => {
+    setIsLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/organizer/${userId}/profile-stats`);
+      const d = await r.json();
+      if (d.success) {
+        setProfile(d.profile);
+        setBio(d.profile.bio || '');
+        setInsta(d.profile.instagram_handle || '');
+        setWhatsapp(d.profile.whatsapp_link || '');
+        setPhotoUri(d.profile.logo_url || null);
+      }
+    } catch (_) {}
+    finally {
+      setIsLoading(false);
+      Animated.timing(fadeAnim, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+    }
+  };
+
+  const saveProfile = async () => {
+    setIsSaving(true);
+    try {
+      const formData = new FormData();
+      formData.append('bio', bio);
+      formData.append('instagram_handle', insta);
+      formData.append('whatsapp_link', whatsapp);
+      if (photoUri && !photoUri.startsWith('http')) {
+        formData.append('photo', { uri: photoUri, name: 'org_logo.jpg', type: 'image/jpeg' });
+      } else if (photoUri) {
+        formData.append('logo_url', photoUri);
+      }
+      const r = await fetch(`${API_URL}/organizer/${userId}/profile`, { method: 'PUT', body: formData });
+      const d = await r.json();
+      if (d.success) {
+        Alert.alert('✅ Saved!', d.message);
+        setIsEditVisible(false);
+        fetchProfile();
+      } else Alert.alert('Error', d.message);
+    } catch (_) { Alert.alert('Error', 'Could not save profile'); }
+    finally { setIsSaving(false); }
+  };
+
+  const changePassword = async () => {
+    if (!currentPw || !newPw || !confirmPw) return Alert.alert('Hold on', 'Please fill all fields.');
+    if (newPw !== confirmPw) return Alert.alert('Mismatch', 'New passwords do not match!');
+    if (newPw.length < 6) return Alert.alert('Too short', 'Password must be at least 6 characters.');
+    setIsChangingPw(true);
+    try {
+      const r = await fetch(`${API_URL}/organizer/${userId}/change-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: currentPw, new_password: newPw }),
+      });
+      const d = await r.json();
+      Alert.alert(d.success ? '🔒 Done!' : 'Error', d.message);
+      if (d.success) { setIsPasswordVisible(false); setCurrentPw(''); setNewPw(''); setConfirmPw(''); }
+    } catch (_) { Alert.alert('Error', 'Could not change password.'); }
+    finally { setIsChangingPw(false); }
+  };
+
+  const pickPhoto = async () => {
+    const r = await ImagePicker.launchImageLibraryAsync({ mediaTypes: ImagePicker.MediaTypeOptions.Images, allowsEditing: true, aspect: [1, 1], quality: 0.8 });
+    if (!r.canceled) setPhotoUri(r.assets[0].uri);
+  };
+
+  const handleLogout = () => {
+    Alert.alert('Log out?', 'You will need to sign in again.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Log out', style: 'destructive', onPress: () => { logout(); navigation.replace('Login'); } },
+    ]);
+  };
+
+  const statItems = [
+    { icon: '🎪', label: 'Events Hosted', value: profile.total_events ?? '—' },
+    { icon: '🎟️', label: 'Total Attendees', value: profile.total_attendees ?? '—' },
+    { icon: '⭐', label: 'Avg Rating', value: profile.avg_rating ? `${profile.avg_rating}/5` : '—' },
+  ];
+
+  if (isLoading) {
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
+        <ActivityIndicator size="large" color={C.purple} />
+      </View>
+    );
+  }
+
+  return (
+    <Animated.ScrollView style={{ opacity: fadeAnim }} contentContainerStyle={{ paddingBottom: 100 }} showsVerticalScrollIndicator={false}>
+
+      {/* ── Hero Banner ── */}
+      <LinearGradient colors={GRAD_HERO} style={{ paddingTop: 40, paddingBottom: 32, alignItems: 'center', paddingHorizontal: 20 }}>
+        <TouchableOpacity onPress={() => setIsEditVisible(true)} activeOpacity={0.85} style={{ position: 'relative', marginBottom: 14 }}>
+          {photoUri
+            ? <Image source={{ uri: photoUri }} style={{ width: 90, height: 90, borderRadius: 45, borderWidth: 3, borderColor: 'rgba(255,255,255,0.6)' }} resizeMode="cover" />
+            : (
+              <LinearGradient colors={['rgba(255,255,255,0.2)', 'rgba(255,255,255,0.08)']} style={{ width: 90, height: 90, borderRadius: 45, alignItems: 'center', justifyContent: 'center', borderWidth: 3, borderColor: 'rgba(255,255,255,0.4)' }}>
+                <Text style={{ fontSize: 34 }}>🎛️</Text>
+              </LinearGradient>
+            )
+          }
+          <View style={{ position: 'absolute', bottom: 2, right: 2, backgroundColor: '#FFF', width: 26, height: 26, borderRadius: 13, alignItems: 'center', justifyContent: 'center', shadowColor: '#000', shadowOpacity: 0.15, shadowRadius: 4, elevation: 3 }}>
+            <Text style={{ fontSize: 12 }}>✏️</Text>
+          </View>
+        </TouchableOpacity>
+
+        <Text style={{ fontSize: 22, fontWeight: '900', color: '#FFF', letterSpacing: -0.3 }}>{profile.name || userName}</Text>
+        {profile.club_name ? <Text style={{ fontSize: 14, color: 'rgba(255,255,255,0.8)', fontWeight: '600', marginTop: 2 }}>{profile.club_name} · {profile.club_role}</Text> : null}
+        {profile.bio ? <Text style={{ fontSize: 13, color: 'rgba(255,255,255,0.7)', textAlign: 'center', marginTop: 8, lineHeight: 18, maxWidth: 280 }}>{profile.bio}</Text> : null}
+
+        <TouchableOpacity onPress={() => setIsEditVisible(true)} style={{ marginTop: 14, paddingHorizontal: 20, paddingVertical: 8, backgroundColor: 'rgba(255,255,255,0.15)', borderRadius: 20, borderWidth: 1, borderColor: 'rgba(255,255,255,0.3)' }}>
+          <Text style={{ color: '#FFF', fontWeight: '700', fontSize: 13 }}>✏️ Edit Profile</Text>
+        </TouchableOpacity>
+      </LinearGradient>
+
+      {/* ── Stats Panel ── */}
+      <View style={{ paddingHorizontal: 20, marginTop: -16 }}>
+        <Card style={{ flexDirection: 'row', padding: 0, overflow: 'hidden' }}>
+          {statItems.map((s, i) => (
+            <View key={i} style={{ flex: 1, alignItems: 'center', paddingVertical: 18, borderRightWidth: i < 2 ? 1 : 0, borderColor: C.border }}>
+              <Text style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</Text>
+              <Text style={{ fontSize: 20, fontWeight: '900', color: C.purple }}>{s.value}</Text>
+              <Text style={{ fontSize: 10, color: C.textMuted, fontWeight: '700', textAlign: 'center', marginTop: 2 }}>{s.label}</Text>
+            </View>
+          ))}
+        </Card>
+      </View>
+
+      {/* ── Social Links ── */}
+      <View style={{ paddingHorizontal: 20, marginTop: 18 }}>
+        <Text style={[styles.sectionTitle, { marginBottom: 12 }]}>🔗 Social & Contact</Text>
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          {[
+            { icon: '📸', label: 'Instagram', value: profile.instagram_handle ? `@${profile.instagram_handle}` : 'Not set', hasValue: !!profile.instagram_handle },
+            { icon: '💬', label: 'WhatsApp Group', value: profile.whatsapp_link || 'Not set', hasValue: !!profile.whatsapp_link },
+            { icon: '📧', label: 'Email', value: profile.email || '—', hasValue: !!profile.email },
+          ].map((item, i) => (
+            <View key={i} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: i < 2 ? 1 : 0, borderColor: C.border }}>
+              <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: C.bgSection, alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+                <Text style={{ fontSize: 18 }}>{item.icon}</Text>
+              </View>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontSize: 11, fontWeight: '800', color: C.textMuted, textTransform: 'uppercase', letterSpacing: 0.8 }}>{item.label}</Text>
+                <Text style={{ fontSize: 14, fontWeight: '600', color: item.hasValue ? C.text : C.textMuted, marginTop: 2 }}>{item.value}</Text>
+              </View>
+              {!item.hasValue && (
+                <TouchableOpacity onPress={() => setIsEditVisible(true)}>
+                  <Text style={{ fontSize: 12, color: C.purple, fontWeight: '700' }}>+ Add</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          ))}
+        </Card>
+      </View>
+
+      {/* ── Account Actions ── */}
+      <View style={{ paddingHorizontal: 20, marginTop: 18, gap: 12 }}>
+        <Text style={[styles.sectionTitle, { marginBottom: 4 }]}>⚙️ Account</Text>
+        <Card style={{ padding: 0, overflow: 'hidden' }}>
+          <TouchableOpacity onPress={() => setIsPasswordVisible(true)} style={{ flexDirection: 'row', alignItems: 'center', padding: 16, borderBottomWidth: 1, borderColor: C.border }}>
+            <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: '#EDE9FE', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+              <Text style={{ fontSize: 18 }}>🔒</Text>
+            </View>
+            <Text style={{ flex: 1, fontSize: 15, fontWeight: '700', color: C.text }}>Change Password</Text>
+            <Text style={{ color: C.textMuted, fontSize: 16 }}>›</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={handleLogout} style={{ flexDirection: 'row', alignItems: 'center', padding: 16 }}>
+            <View style={{ width: 38, height: 38, borderRadius: 12, backgroundColor: '#FEE2E2', alignItems: 'center', justifyContent: 'center', marginRight: 14 }}>
+              <Text style={{ fontSize: 18 }}>🚪</Text>
+            </View>
+            <Text style={{ flex: 1, fontSize: 15, fontWeight: '700', color: C.accentRed }}>Log Out</Text>
+            <Text style={{ color: C.textMuted, fontSize: 16 }}>›</Text>
+          </TouchableOpacity>
+        </Card>
+      </View>
+
+      {/* ── Edit Profile Modal ── */}
+      <Modal visible={isEditVisible} animationType="slide" presentationStyle="pageSheet">
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setIsEditVisible(false)} style={styles.modalCloseBtn}>
+              <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Edit Profile</Text>
+            <View style={{ width: 36 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+
+            {/* Profile Photo Picker */}
+            <TouchableOpacity onPress={pickPhoto} style={{ alignSelf: 'center', marginBottom: 24, position: 'relative' }}>
+              {photoUri
+                ? <Image source={{ uri: photoUri }} style={{ width: 90, height: 90, borderRadius: 45, borderWidth: 2, borderColor: C.borderMid }} />
+                : <LinearGradient colors={GRAD_PURPLE} style={{ width: 90, height: 90, borderRadius: 45, alignItems: 'center', justifyContent: 'center' }}><Text style={{ fontSize: 30 }}>🎛️</Text></LinearGradient>
+              }
+              <View style={{ position: 'absolute', bottom: 0, right: 0, backgroundColor: C.purple, width: 28, height: 28, borderRadius: 14, alignItems: 'center', justifyContent: 'center' }}>
+                <Text style={{ color: '#FFF', fontSize: 14 }}>📷</Text>
+              </View>
+            </TouchableOpacity>
+
+            <Text style={styles.fieldLabel}>Club Bio / Description</Text>
+            <LightInput placeholder="Tell students about your club..." value={bio} onChangeText={setBio} multiline style={{ minHeight: 80, marginBottom: 8 }} />
+
+            <Text style={styles.fieldLabel}>Instagram Handle (without @)</Text>
+            <LightInput placeholder="e.g. techclub_college" value={insta} onChangeText={setInsta} autoCapitalize="none" />
+
+            <Text style={styles.fieldLabel}>WhatsApp Group Link</Text>
+            <LightInput placeholder="https://chat.whatsapp.com/..." value={whatsapp} onChangeText={setWhatsapp} autoCapitalize="none" keyboardType="url" />
+
+            <PurpleButton label="Save Profile ✓" onPress={saveProfile} disabled={isSaving} style={{ marginTop: 16 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Change Password Modal ── */}
+      <Modal visible={isPasswordVisible} animationType="slide" presentationStyle="pageSheet">
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setIsPasswordVisible(false)} style={styles.modalCloseBtn}>
+              <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Change Password</Text>
+            <View style={{ width: 36 }} />
+          </View>
+          <ScrollView contentContainerStyle={{ padding: 20, paddingBottom: 60 }}>
+            <Text style={styles.fieldLabel}>Current Password</Text>
+            <LightInput placeholder="Enter current password" value={currentPw} onChangeText={setCurrentPw} secureTextEntry />
+            <Text style={styles.fieldLabel}>New Password</Text>
+            <LightInput placeholder="At least 6 characters" value={newPw} onChangeText={setNewPw} secureTextEntry />
+            <Text style={styles.fieldLabel}>Confirm New Password</Text>
+            <LightInput placeholder="Repeat new password" value={confirmPw} onChangeText={setConfirmPw} secureTextEntry />
+            <PurpleButton label="Change Password 🔒" onPress={changePassword} disabled={isChangingPw} style={{ marginTop: 20 }} />
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+    </Animated.ScrollView>
+  );
+}
+
 // ─── ORGANIZER DASHBOARD ──────────────────────────────────────────────
 function OrganizerDashboard({ route, navigation }) {
   const user = useAuthStore(state => state.user);
@@ -2074,6 +2340,7 @@ function OrganizerDashboard({ route, navigation }) {
     { key: 'scan', icon: '📷', label: 'Scan QR' },
     { key: 'stats', icon: '📊', label: 'Stats' },
     { key: 'profile', icon: '🛠', label: 'Storefront' },
+    { key: 'myprofile', icon: '👤', label: 'Profile' },
   ];
 
   return (
@@ -2315,6 +2582,11 @@ function OrganizerDashboard({ route, navigation }) {
       {/* STOREFRONT */}
       {viewMode === 'profile' && (
         <OrganizerStorefront userId={userId} />
+      )}
+
+      {/* MY PROFILE */}
+      {viewMode === 'myprofile' && (
+        <OrganizerProfileTab userId={userId} userName={userName} navigation={navigation} />
       )}
 
       <BottomNav tabs={ORG_TABS} active={viewMode} onChange={setViewMode} />

@@ -55,9 +55,13 @@ CREATE TABLE IF NOT EXISTS club_profiles (
   logo_url VARCHAR(500),
   banner_url VARCHAR(500),
   instagram_handle VARCHAR(100),
+  whatsapp_link VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (organizer_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+-- Run this if club_profiles table already exists:
+-- ALTER TABLE club_profiles ADD COLUMN IF NOT EXISTS whatsapp_link VARCHAR(255);
 
 CREATE TABLE IF NOT EXISTS followers (
   follow_id INT AUTO_INCREMENT PRIMARY KEY,

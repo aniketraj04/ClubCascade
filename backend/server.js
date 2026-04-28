@@ -108,6 +108,75 @@ app.post('/api/users/:id/push-token', verifyToken, (req, res) => {
   });
 });
 
+// ─── ORGANIZER PROFILE ENDPOINTS ──────────────────────────────────────
+
+// GET organizer profile + stats
+app.get('/api/organizer/:id/profile-stats', verifyToken, (req, res) => {
+  const orgId = req.params.id;
+  const statsQuery = `
+    SELECT
+      u.name, u.email, u.profile_picture_url,
+      u.club_name, u.club_role,
+      cp.bio, cp.instagram_handle, cp.whatsapp_link, cp.logo_url,
+      COUNT(DISTINCT e.event_id)        AS total_events,
+      COUNT(DISTINCT r.registration_id) AS total_attendees,
+      ROUND(AVG(ef.rating), 1)          AS avg_rating
+    FROM users u
+    LEFT JOIN club_profiles cp ON cp.organizer_id = u.id
+    LEFT JOIN events e         ON e.club_id = u.id
+    LEFT JOIN registrations r  ON r.event_id = e.event_id
+    LEFT JOIN event_feedback ef ON ef.event_id = e.event_id
+    WHERE u.id = ?
+    GROUP BY u.id
+  `;
+  db.query(statsQuery, [orgId], (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'DB error' });
+    res.json({ success: true, profile: results[0] || {} });
+  });
+});
+
+// PUT update organizer profile (bio, social links, photo)
+app.put('/api/organizer/:id/profile', verifyToken, upload.single('photo'), (req, res) => {
+  const orgId = req.params.id;
+  const { bio, instagram_handle, whatsapp_link } = req.body;
+  const SERVER_IP = process.env.SERVER_IP || '10.169.91.100';
+  const PORT = process.env.PORT || 3000;
+  const logoUrl = req.file
+    ? `http://${SERVER_IP}:${PORT}/uploads/${req.file.filename}`
+    : (req.body.logo_url || null);
+
+  // Upsert into club_profiles
+  const sql = `
+    INSERT INTO club_profiles (organizer_id, bio, instagram_handle, whatsapp_link, logo_url)
+    VALUES (?, ?, ?, ?, ?)
+    ON DUPLICATE KEY UPDATE
+      bio = VALUES(bio),
+      instagram_handle = VALUES(instagram_handle),
+      whatsapp_link = VALUES(whatsapp_link),
+      logo_url = COALESCE(VALUES(logo_url), logo_url)
+  `;
+  db.query(sql, [orgId, bio || '', instagram_handle || '', whatsapp_link || '', logoUrl], (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Could not save profile' });
+    res.json({ success: true, message: 'Profile updated!' });
+  });
+});
+
+// POST change organizer password
+app.post('/api/organizer/:id/change-password', verifyToken, (req, res) => {
+  const orgId = req.params.id;
+  const { current_password, new_password } = req.body;
+  if (!current_password || !new_password) return res.json({ success: false, message: 'Both fields required' });
+  db.query('SELECT password FROM users WHERE id = ?', [orgId], (err, results) => {
+    if (err || !results.length) return res.status(500).json({ success: false, message: 'User not found' });
+    if (results[0].password !== current_password) return res.json({ success: false, message: 'Current password is incorrect' });
+    db.query('UPDATE users SET password = ? WHERE id = ?', [new_password, orgId], (err2) => {
+      if (err2) return res.status(500).json({ success: false, message: 'Could not update password' });
+      res.json({ success: true, message: 'Password changed successfully!' });
+    });
+  });
+});
+
+
 // LOGIN API 
 app.post('/api/login', (req, res) => {
   const { email, password } = req.body;
