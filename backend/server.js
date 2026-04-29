@@ -30,7 +30,7 @@ async function sendPushNotification(tokens, title, body) {
   if (!tokens || tokens.length === 0) return;
   const validTokens = tokens.filter(t => t && t.startsWith('ExponentPushToken'));
   if (validTokens.length === 0) return;
-  const messages = validTokens.map(token => ({ to: token, sound: 'default', title, body, priority: 'high' }));
+  const messages = validTokens.map(token => ({ to: token, sound: 'default', title, body, priority: 'high', channelId: 'default' }));
   try {
     await fetch('https://exp.host/--/api/v2/push/send', {
       method: 'POST',
@@ -280,10 +280,59 @@ app.post('/api/users/:id/avatar', upload.single('avatar'), (req, res) => {
   });
 });
 
-// SIGNUP API
+// ─── SIGNUP OTP & VERIFICATION ────────────────────────────────────────
+
+// Step 1: Send OTP for Signup
+app.post('/api/send-signup-otp', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.json({ success: false, message: 'Email is required.' });
+
+  // First check if email already exists
+  db.query('SELECT id FROM users WHERE email = ?', [email], async (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error.' });
+    if (results.length > 0) return res.json({ success: false, message: 'Email is already registered.' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    otpStore.set(email + '_signup', { otp, expiresAt });
+
+    try {
+      await transporter.sendMail({
+        from: `"ClubCascade 🎪" <${process.env.GMAIL_USER}>`,
+        to: email,
+        subject: 'Verify your ClubCascade account!',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;background:#F5F3FF;border-radius:16px">
+            <h2 style="color:#7C3AED;margin-bottom:8px">👋 Welcome to ClubCascade!</h2>
+            <p style="color:#374151">Use the OTP below to verify your email and complete your registration. It expires in <b>10 minutes</b>.</p>
+            <div style="background:#7C3AED;border-radius:12px;padding:20px;text-align:center;margin:20px 0">
+              <span style="font-size:36px;font-weight:900;color:#FFF;letter-spacing:8px">${otp}</span>
+            </div>
+            <p style="color:#9CA3AF;font-size:12px">If you didn't request this, you can ignore this email.</p>
+          </div>
+        `,
+      });
+      res.json({ success: true, message: 'OTP sent to your email!' });
+    } catch (e) {
+      console.error('Email error:', e.message);
+      res.status(500).json({ success: false, message: 'Failed to send email. Check Gmail credentials.' });
+    }
+  });
+});
+
+// SIGNUP API (Step 2: Verify OTP and Create Account)
 app.post('/api/signup', (req, res) => {
-  const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year } = req.body;
-  if (!name || !email || !password) return res.json({ success: false, message: 'Please provide all details.' });
+  const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year, otp } = req.body;
+  if (!name || !email || !password || !otp) return res.json({ success: false, message: 'Please provide all details including OTP.' });
+
+  // 1. Verify OTP
+  const record = otpStore.get(email + '_signup');
+  if (!record) return res.json({ success: false, message: 'No OTP found. Please request a new one.' });
+  if (Date.now() > record.expiresAt) {
+    otpStore.delete(email + '_signup');
+    return res.json({ success: false, message: 'OTP has expired. Please request a new one.' });
+  }
+  if (record.otp !== otp.trim()) return res.json({ success: false, message: 'Incorrect OTP. Please try again.' });
 
   if (role === 'organizer') {
     if (!phone || !club_name || !club_role || !department || !student_id || !study_year) {
@@ -302,6 +351,7 @@ app.post('/api/signup', (req, res) => {
 
     // For students, generate a token immediately
     const token = jwt.sign({ id: result.insertId, role: role || 'student' }, JWT_SECRET, { expiresIn: '7d' });
+    otpStore.delete(email + '_signup'); // Clear the OTP after successful registration
     res.json({ success: true, message: 'Account securely created!', token });
   });
 });

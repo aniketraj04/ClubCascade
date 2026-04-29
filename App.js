@@ -31,6 +31,16 @@ async function registerForPushNotifications(userId, apiUrl) {
     console.log('Push notifications only work on physical devices.');
     return;
   }
+
+  if (Platform.OS === 'android') {
+    await Notifications.setNotificationChannelAsync('default', {
+      name: 'default',
+      importance: Notifications.AndroidImportance.MAX,
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#7C3AED',
+    });
+  }
+
   const { status: existing } = await Notifications.getPermissionsAsync();
   let finalStatus = existing;
   if (existing !== 'granted') {
@@ -290,6 +300,11 @@ function LoginScreen({ navigation }) {
   const [forgotConfirmPw, setForgotConfirmPw] = useState('');
   const [isForgotLoading, setIsForgotLoading] = useState(false);
 
+  // Signup OTP Flow
+  const [signupOtpModalVisible, setSignupOtpModalVisible] = useState(false);
+  const [signupOtp, setSignupOtp] = useState('');
+  const [isSignupOtpLoading, setIsSignupOtpLoading] = useState(false);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -313,31 +328,49 @@ function LoginScreen({ navigation }) {
     if (!isLoginMode && password !== confirmPassword) {
       Alert.alert('Mismatch', 'Passwords do not match!'); return;
     }
+
+    if (!isLoginMode) {
+      // It's a Signup -> Send OTP First
+      if (role === 'organizer' && (!phone || !clubName || !clubRole || !department || !studentId || !studyYear)) {
+        Alert.alert('Incomplete', 'Organizers must provide all verification details.'); return;
+      }
+      setIsLoading(true);
+      try {
+        const r = await fetch(`${API_URL}/send-signup-otp`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          Alert.alert('📧 Verification Code Sent!', 'Please check your email to complete registration.');
+          setSignupOtpModalVisible(true);
+        } else {
+          Alert.alert('Oops!', d.message);
+        }
+      } catch (e) {
+        Alert.alert('Error', 'Server unreachable');
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // It's a Login -> Proceed as normal
     setIsLoading(true);
     try {
-      const r = await fetch(`${API_URL}${isLoginMode ? '/login' : '/signup'}`, {
+      const r = await fetch(`${API_URL}/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(
-          isLoginMode
-            ? { email, password }
-            : { name, email, password, role, phone, club_name: clubName, club_role: clubRole, department, student_id: studentId, study_year: studyYear }
-        ),
+        body: JSON.stringify({ email, password }),
       });
       const data = await r.json();
       if (data.success) {
         if (data.token) useAuthStore.getState().setToken(data.token);
         if (data.user) useAuthStore.getState().setUser(data.user);
         
-        if (isLoginMode) {
-          const dest = data.user.role === 'student' ? 'Student' : data.user.role === 'admin' ? 'Admin' : 'Organizer';
-          // Register device for push notifications silently in background
-          registerForPushNotifications(data.user.id, process.env.EXPO_PUBLIC_API_URL);
-          navigation.replace(dest);
-        } else {
-          Alert.alert('Account created! ✨', data.message);
-          setIsLoginMode(true);
-        }
+        const dest = data.user.role === 'student' ? 'Student' : data.user.role === 'admin' ? 'Admin' : 'Organizer';
+        registerForPushNotifications(data.user.id, process.env.EXPO_PUBLIC_API_URL);
+        navigation.replace(dest);
       } else {
         Alert.alert('Oops!', data.message || 'Something went wrong.');
       }
@@ -345,6 +378,33 @@ function LoginScreen({ navigation }) {
       Alert.alert('Error', 'Server unreachable');
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const submitSignupWithOtp = async () => {
+    if (!signupOtp || signupOtp.length !== 6) return Alert.alert('Required', 'Please enter the 6-digit OTP.');
+    setIsSignupOtpLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name, email, password, role, phone, club_name: clubName, club_role: clubRole, department, student_id: studentId, study_year: studyYear, otp: signupOtp
+        }),
+      });
+      const data = await r.json();
+      if (data.success) {
+        Alert.alert('Account created! ✨', data.message);
+        setSignupOtpModalVisible(false);
+        setSignupOtp('');
+        setIsLoginMode(true);
+      } else {
+        Alert.alert('Verification Failed', data.message);
+      }
+    } catch (e) {
+      Alert.alert('Error', 'Server unreachable');
+    } finally {
+      setIsSignupOtpLoading(false);
     }
   };
 
@@ -524,6 +584,33 @@ function LoginScreen({ navigation }) {
                 </TouchableOpacity>
               </>
             )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
+      {/* ── Signup OTP Verification Modal ── */}
+      <Modal visible={signupOtpModalVisible} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setSignupOtpModalVisible(false)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setSignupOtpModalVisible(false)} style={styles.modalCloseBtn}>
+              <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>Verify Email</Text>
+            <View style={{ width: 36 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 60 }}>
+            <View style={{ backgroundColor: '#F0FDF4', borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#BBF7D0', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+              <Text style={{ fontSize: 24 }}>📧</Text>
+              <View style={{ flex: 1 }}>
+                <Text style={{ fontWeight: '800', color: '#166534', fontSize: 14 }}>OTP Sent to {email}</Text>
+                <Text style={{ color: '#15803D', fontSize: 12, marginTop: 2 }}>Please enter the 6-digit code to complete registration.</Text>
+              </View>
+            </View>
+            <Text style={styles.fieldLabel}>Enter OTP</Text>
+            <LightInput placeholder="6-digit code" value={signupOtp} onChangeText={setSignupOtp} keyboardType="number-pad" maxLength={6} />
+            
+            <PurpleButton label="Verify & Sign Up ✓" onPress={submitSignupWithOtp} disabled={isSignupOtpLoading} style={{ marginTop: 16 }} />
           </ScrollView>
         </SafeAreaView>
       </Modal>
