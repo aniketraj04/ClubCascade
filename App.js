@@ -1336,6 +1336,7 @@ function StudentDashboard({ route, navigation }) {
           <Text style={styles.eventCardTitle} numberOfLines={2}>{item.title}</Text>
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6, flexWrap: 'wrap' }}>
             <Text style={styles.eventCardMeta}>📍 {item.venue}</Text>
+            <Text style={styles.eventCardMeta}>⏳ {item.duration || '1hr'}</Text>
             {item.limit_participants > 0 && (
               <Text style={[styles.eventCardMeta, isFull && { color: C.accentRed, fontWeight: '700' }]}>
                 👥 {item.current_registered ?? 0}/{item.limit_participants} {isFull ? '· FULL' : ''}
@@ -1449,7 +1450,7 @@ function StudentDashboard({ route, navigation }) {
         <View style={{ padding: 20 }}>
           <Text style={styles.ticketTitle}>{item.title}</Text>
           <Text style={styles.cardMeta}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' })}</Text>
-          <Text style={styles.cardMeta}>📍 {item.venue}</Text>
+          <Text style={styles.cardMeta}>📍 {item.venue} · ⏳ {item.duration || '1hr'}</Text>
           <View style={{ alignItems: 'center', marginVertical: 16 }}>
             <View style={[styles.ticketIdPill, { backgroundColor: C.bgSection, marginBottom: 16 }]}>
               <Text style={[styles.ticketIdText, { color: C.purple }]}>Ticket #{item.registration_id}</Text>
@@ -1725,8 +1726,9 @@ function StudentDashboard({ route, navigation }) {
                     <Text style={[styles.modalMetaCardValue, { fontSize: 13, color: C.textSub }]}>{new Date(selectedEvent.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} onwards</Text>
                   </View>
                   <View style={styles.modalMetaCard}>
-                    <Text style={styles.modalMetaCardLabel}>VENUE</Text>
+                    <Text style={styles.modalMetaCardLabel}>VENUE & DURATION</Text>
                     <Text style={styles.modalMetaCardValue}>{selectedEvent.venue}</Text>
+                    <Text style={[styles.modalMetaCardValue, { fontSize: 13, color: C.textSub }]}>⏳ {selectedEvent.duration || '1hr'} Duration</Text>
                     {item.limit_participants > 0 && (
                       <Text style={{ fontSize: 12, color: isFull ? C.accentRed : C.textMuted, fontWeight: '700', marginTop: 4 }}>
                         👥 {item.current_registered || 0}/{item.limit_participants} Spots {isFull ? '(FULL)' : ''}
@@ -2352,6 +2354,8 @@ function OrganizerDashboard({ route, navigation }) {
   const [isFeedbackVisible, setIsFeedbackVisible] = useState(false);
   const [feedbackData, setFeedbackData] = useState({ average_rating: 0, feedback: [] });
   const [feedbackEventTitle, setFeedbackEventTitle] = useState('');
+  const [duration, setDuration] = useState('1hr');
+  const [editDuration, setEditDuration] = useState('1hr');
 
   const API_URL = process.env.EXPO_PUBLIC_API_URL;
   const SOCKET_URL = process.env.EXPO_PUBLIC_SOCKET_URL;
@@ -2417,6 +2421,7 @@ function OrganizerDashboard({ route, navigation }) {
     setCurrentEventObj(event);
     setEditTitle(event.title); setEditDesc(event.description); setEditVenue(event.venue);
     setEditLimit(event.limit_participants.toString()); setEditCategory(event.category || 'General');
+    setEditDuration(event.duration || '1hr');
     setEditImageUri(event.image_url); if (event.date) setEditDate(new Date(event.date));
     setIsEditModalVisible(true);
   };
@@ -2427,6 +2432,7 @@ function OrganizerDashboard({ route, navigation }) {
       formData.append('title', editTitle); formData.append('description', editDesc);
       formData.append('venue', editVenue); formData.append('limit_participants', editLimit || 0);
       formData.append('category', editCategory);
+      formData.append('duration', editDuration);
       if (editImageUri && !editImageUri.startsWith('http'))
         formData.append('poster', { uri: editImageUri, name: 'poster.jpg', type: 'image/jpeg' });
       else formData.append('image_url', editImageUri || '');
@@ -2503,6 +2509,7 @@ function OrganizerDashboard({ route, navigation }) {
       formData.append('title', title); formData.append('description', description);
       formData.append('date', formatMySQL(date)); formData.append('venue', venue);
       formData.append('limit_participants', limitParticipants || 0); formData.append('category', category);
+      formData.append('duration', duration);
       formData.append('organizer_id', userId);
       if (imageUri) formData.append('poster', { uri: imageUri, name: 'poster.jpg', type: 'image/jpeg' });
       const r = await fetch(`${API_URL}/events`, { method: 'POST', body: formData });
@@ -2559,7 +2566,10 @@ function OrganizerDashboard({ route, navigation }) {
             <LightInput placeholder="Event Title" value={title} onChangeText={setTitle} />
             <LightInput placeholder="Description" value={description} onChangeText={setDescription} multiline style={{ minHeight: 80 }} />
             <LightInput placeholder="Venue / Location" value={venue} onChangeText={setVenue} />
-            <LightInput placeholder="Capacity limit (e.g. 50)" keyboardType="numeric" value={limitParticipants} onChangeText={setLimitParticipants} />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <LightInput placeholder="Capacity limit" keyboardType="numeric" value={limitParticipants} onChangeText={setLimitParticipants} style={{ flex: 1 }} />
+              <LightInput placeholder="Duration (e.g. 2hr)" value={duration} onChangeText={setDuration} style={{ flex: 1 }} />
+            </View>
 
             <Text style={styles.fieldLabel}>Category</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8, marginBottom: 16 }}>
@@ -2608,7 +2618,7 @@ function OrganizerDashboard({ route, navigation }) {
             : manageEvents.map(item => (
               <Card key={item.event_id} style={{ marginTop: 14 }}>
                 <Text style={styles.cardTitle}>{item.title}</Text>
-                <Text style={styles.cardMeta}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · 📍 {item.venue}</Text>
+                <Text style={styles.cardMeta}>📅 {new Date(item.date).toLocaleString([], { dateStyle: 'short', timeStyle: 'short' })} · ⏳ {item.duration || '1hr'} · 📍 {item.venue}</Text>
                 <View style={styles.actionRow}>
                   <TouchableOpacity onPress={() => openEditModal(item)} style={styles.actionChip}>
                     <Text style={styles.actionChipText}>🖍️ Edit</Text>
@@ -2794,7 +2804,10 @@ function OrganizerDashboard({ route, navigation }) {
             <LightInput placeholder="Title" value={editTitle} onChangeText={setEditTitle} />
             <LightInput placeholder="Description" value={editDesc} onChangeText={setEditDesc} multiline style={{ minHeight: 80 }} />
             <LightInput placeholder="Venue" value={editVenue} onChangeText={setEditVenue} />
-            <LightInput placeholder="Capacity" value={editLimit} onChangeText={setEditLimit} keyboardType="numeric" />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <LightInput placeholder="Capacity" value={editLimit} onChangeText={setEditLimit} keyboardType="numeric" style={{ flex: 1 }} />
+              <LightInput placeholder="Duration" value={editDuration} onChangeText={setEditDuration} style={{ flex: 1 }} />
+            </View>
             <Text style={styles.fieldLabel}>Category</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} style={{ marginTop: 8, marginBottom: 16 }}>
               {ORGANIZER_CATS.map(cat => {

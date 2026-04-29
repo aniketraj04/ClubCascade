@@ -404,8 +404,8 @@ app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req,
       finalImageUrl = `http://${serverIp}:${process.env.PORT || 3000}/uploads/${req.file.filename}`;
     }
 
-    const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ?, date = ? WHERE event_id = ?';
-    db.query(sqlQuery, [title, description, venue, limit_participants, category, finalImageUrl, date, eventId], (err, result) => {
+    const sqlQuery = 'UPDATE events SET title = ?, description = ?, venue = ?, limit_participants = ?, category = ?, image_url = ?, date = ?, duration = ? WHERE event_id = ?';
+    db.query(sqlQuery, [title, description, venue, limit_participants, category, finalImageUrl, date, duration || '1hr', eventId], (err, result) => {
       if (err) return res.status(500).json({ success: false, message: 'Database error while updating event.' });
       if (result.affectedRows === 0) return res.json({ success: false, message: 'Event not found.' });
 
@@ -451,7 +451,7 @@ app.delete('/api/events/:event_id', verifyOrganizer, (req, res) => {
 // ===================================================================
 
 app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => {
-  const { title, description, date, venue, club_id, limit_participants, category, organizer_id } = req.body;
+  const { title, description, date, venue, club_id, limit_participants, category, organizer_id, duration } = req.body;
 
   console.log("-> Processing new categorized event:", title);
 
@@ -472,10 +472,10 @@ app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => 
       console.log("-> Successfully saved gallery image locally:", req.file.filename);
     }
 
-    const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
+    const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id, duration) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)';
     // Always use the JWT-verified user id as organizer_id so stats work correctly
     const resolvedOrganizerId = req.user.id || organizer_id || null;
-    const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', resolvedOrganizerId];
+    const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', resolvedOrganizerId, duration || '1hr'];
 
     db.query(sqlQuery, values, (err, result) => {
       if (err) return res.status(500).json({ success: false, message: 'Database refused to save: ' + err.message });
