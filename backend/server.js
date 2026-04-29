@@ -555,22 +555,22 @@ app.post('/api/register', verifyToken, (req, res) => {
               subject: `🎟️ Ticket Confirmed: ${data.title}`,
               html: `
                 <div style="font-family: 'Inter', sans-serif; max-width: 500px; margin: auto; background: #FFF; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #F3F4F6;">
-                  ${data.image_url ? \`<img src="\${data.image_url}" style="width: 100%; height: 200px; object-fit: cover;" alt="Event Cover" />\` : \`<div style="background: linear-gradient(135deg, #7C3AED, #3B82F6); width: 100%; height: 160px; display: flex; align-items: center; justify-content: center;"><h1 style="color: white; margin: 0; font-size: 24px;">\${data.title}</h1></div>\`}
+                  ${data.image_url ? `<img src="${data.image_url}" style="width: 100%; height: 200px; object-fit: cover;" alt="Event Cover" />` : `<div style="background: linear-gradient(135deg, #7C3AED, #3B82F6); width: 100%; height: 160px; display: flex; align-items: center; justify-content: center;"><h1 style="color: white; margin: 0; font-size: 24px;">${data.title}</h1></div>`}
                   
                   <div style="padding: 30px;">
-                    <h2 style="color: #111827; margin-top: 0; font-size: 24px;">Hi \${data.name.split(' ')[0]}, you're in! 🎉</h2>
-                    <p style="color: #4B5563; font-size: 15px; line-height: 1.6;">Your registration for <strong>\${data.title}</strong> is confirmed. Keep this ticket handy; you'll need to show the QR code at the entrance.</p>
+                    <h2 style="color: #111827; margin-top: 0; font-size: 24px;">Hi ${data.name.split(' ')[0]}, you're in! 🎉</h2>
+                    <p style="color: #4B5563; font-size: 15px; line-height: 1.6;">Your registration for <strong>${data.title}</strong> is confirmed. Keep this ticket handy; you'll need to show the QR code at the entrance.</p>
                     
                     <div style="background: #F9FAFB; border-radius: 12px; padding: 16px; margin: 24px 0; border: 1px solid #E5E7EB;">
-                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📅 <strong>When:</strong> \${eventDate}</p>
-                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📍 <strong>Where:</strong> \${data.venue}</p>
-                      <p style="margin: 0; color: #374151; font-size: 14px;">⏳ <strong>Duration:</strong> \${data.duration || '1hr'}</p>
+                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📅 <strong>When:</strong> ${eventDate}</p>
+                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📍 <strong>Where:</strong> ${data.venue}</p>
+                      <p style="margin: 0; color: #374151; font-size: 14px;">⏳ <strong>Duration:</strong> ${data.duration || '1hr'}</p>
                     </div>
 
                     <div style="text-align: center; margin-top: 30px;">
                       <p style="color: #6B7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">Your Entry Ticket</p>
-                      <img src="\${qrUrl}" alt="QR Code Ticket" style="width: 220px; height: 220px; border-radius: 16px; border: 4px solid #F3F4F6; padding: 8px; background: #FFF;" />
-                      <p style="color: #7C3AED; font-weight: 800; font-size: 18px; margin-top: 12px; font-family: monospace;">#\${newRegId}</p>
+                      <img src="${qrUrl}" alt="QR Code Ticket" style="width: 220px; height: 220px; border-radius: 16px; border: 4px solid #F3F4F6; padding: 8px; background: #FFF;" />
+                      <p style="color: #7C3AED; font-weight: 800; font-size: 18px; margin-top: 12px; font-family: monospace;">#${newRegId}</p>
                     </div>
                   </div>
                   
