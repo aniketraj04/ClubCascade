@@ -536,9 +536,52 @@ app.post('/api/register', verifyToken, (req, res) => {
       }
 
       // 3. Register the student!
-      db.query('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)', [user_id, event_id], (err) => {
+      db.query('INSERT INTO registrations (user_id, event_id) VALUES (?, ?)', [user_id, event_id], (err, insertResult) => {
         if (err) return res.status(500).json({ success: false, message: 'Database error saving registration.' });
+        
+        const newRegId = insertResult.insertId;
         res.json({ success: true, message: 'Successfully registered! We will see you there.' });
+
+        // Phase 6: Send booking confirmation email with QR Ticket
+        db.query('SELECT u.name, u.email, e.title, e.date, e.venue, e.duration, e.image_url FROM users u JOIN events e ON e.event_id = ? WHERE u.id = ?', [event_id, user_id], (err, rows) => {
+          if (!err && rows.length > 0) {
+            const data = rows[0];
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${newRegId}&color=7C3AED&bgcolor=FFFFFF`;
+            const eventDate = new Date(data.date).toLocaleString('en-US', { weekday: 'long', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            
+            transporter.sendMail({
+              from: `"ClubCascade Tickets 🎫" <${process.env.GMAIL_USER}>`,
+              to: data.email,
+              subject: `🎟️ Ticket Confirmed: ${data.title}`,
+              html: `
+                <div style="font-family: 'Inter', sans-serif; max-width: 500px; margin: auto; background: #FFF; border-radius: 20px; overflow: hidden; box-shadow: 0 10px 25px rgba(0,0,0,0.05); border: 1px solid #F3F4F6;">
+                  ${data.image_url ? \`<img src="\${data.image_url}" style="width: 100%; height: 200px; object-fit: cover;" alt="Event Cover" />\` : \`<div style="background: linear-gradient(135deg, #7C3AED, #3B82F6); width: 100%; height: 160px; display: flex; align-items: center; justify-content: center;"><h1 style="color: white; margin: 0; font-size: 24px;">\${data.title}</h1></div>\`}
+                  
+                  <div style="padding: 30px;">
+                    <h2 style="color: #111827; margin-top: 0; font-size: 24px;">Hi \${data.name.split(' ')[0]}, you're in! 🎉</h2>
+                    <p style="color: #4B5563; font-size: 15px; line-height: 1.6;">Your registration for <strong>\${data.title}</strong> is confirmed. Keep this ticket handy; you'll need to show the QR code at the entrance.</p>
+                    
+                    <div style="background: #F9FAFB; border-radius: 12px; padding: 16px; margin: 24px 0; border: 1px solid #E5E7EB;">
+                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📅 <strong>When:</strong> \${eventDate}</p>
+                      <p style="margin: 0 0 8px 0; color: #374151; font-size: 14px;">📍 <strong>Where:</strong> \${data.venue}</p>
+                      <p style="margin: 0; color: #374151; font-size: 14px;">⏳ <strong>Duration:</strong> \${data.duration || '1hr'}</p>
+                    </div>
+
+                    <div style="text-align: center; margin-top: 30px;">
+                      <p style="color: #6B7280; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 12px;">Your Entry Ticket</p>
+                      <img src="\${qrUrl}" alt="QR Code Ticket" style="width: 220px; height: 220px; border-radius: 16px; border: 4px solid #F3F4F6; padding: 8px; background: #FFF;" />
+                      <p style="color: #7C3AED; font-weight: 800; font-size: 18px; margin-top: 12px; font-family: monospace;">#\${newRegId}</p>
+                    </div>
+                  </div>
+                  
+                  <div style="background: #F3F4F6; padding: 16px; text-align: center;">
+                    <p style="color: #9CA3AF; font-size: 12px; margin: 0;">Sent via ClubCascade App</p>
+                  </div>
+                </div>
+              `
+            }).catch(e => console.log('Booking email failed to send:', e.message));
+          }
+        });
       });
     });
   });
