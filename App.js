@@ -282,6 +282,14 @@ function LoginScreen({ navigation }) {
   const [isLoginMode, setIsLoginMode] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Forgot Password flow
+  const [forgotStep, setForgotStep] = useState(0); // 0=closed, 1=enter email, 2=enter OTP+new pw
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotOtp, setForgotOtp] = useState('');
+  const [forgotNewPw, setForgotNewPw] = useState('');
+  const [forgotConfirmPw, setForgotConfirmPw] = useState('');
+  const [isForgotLoading, setIsForgotLoading] = useState(false);
+
   const fadeAnim = useRef(new Animated.Value(0)).current;
   const slideAnim = useRef(new Animated.Value(30)).current;
   const API_URL = process.env.EXPO_PUBLIC_API_URL;
@@ -338,6 +346,40 @@ function LoginScreen({ navigation }) {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!forgotEmail) return Alert.alert('Required', 'Please enter your email.');
+    setIsForgotLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/forgot-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail }),
+      });
+      const d = await r.json();
+      if (d.success) { Alert.alert('📧 OTP Sent!', d.message); setForgotStep(2); }
+      else Alert.alert('Error', d.message);
+    } catch (_) { Alert.alert('Error', 'Could not reach server.'); }
+    finally { setIsForgotLoading(false); }
+  };
+
+  const handleResetPassword = async () => {
+    if (!forgotOtp || !forgotNewPw || !forgotConfirmPw) return Alert.alert('Required', 'Fill all fields.');
+    if (forgotNewPw !== forgotConfirmPw) return Alert.alert('Mismatch', 'Passwords do not match!');
+    if (forgotNewPw.length < 6) return Alert.alert('Too short', 'Minimum 6 characters.');
+    setIsForgotLoading(true);
+    try {
+      const r = await fetch(`${API_URL}/reset-password`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail, otp: forgotOtp, new_password: forgotNewPw }),
+      });
+      const d = await r.json();
+      if (d.success) {
+        Alert.alert('✅ Done!', d.message);
+        setForgotStep(0); setForgotEmail(''); setForgotOtp(''); setForgotNewPw(''); setForgotConfirmPw('');
+      } else Alert.alert('Error', d.message);
+    } catch (_) { Alert.alert('Error', 'Could not reach server.'); }
+    finally { setIsForgotLoading(false); }
   };
 
   return (
@@ -414,6 +456,13 @@ function LoginScreen({ navigation }) {
 
             <PurpleButton label={isLoginMode ? 'Log In' : 'Create Account'} onPress={handleAuthentication}
               disabled={isLoading} style={{ marginTop: 8 }} />
+
+            {/* Forgot Password link — only in login mode */}
+            {isLoginMode && (
+              <TouchableOpacity onPress={() => setForgotStep(1)} style={{ alignSelf: 'center', marginTop: 14, padding: 4 }}>
+                <Text style={{ color: C.purple, fontSize: 13, fontWeight: '600' }}>Forgot password?</Text>
+              </TouchableOpacity>
+            )}
           </Card>
 
           <TouchableOpacity onPress={() => setIsLoginMode(!isLoginMode)} style={{ marginTop: 20, padding: 8 }}>
@@ -426,6 +475,59 @@ function LoginScreen({ navigation }) {
           </TouchableOpacity>
         </Animated.View>
       </ScrollView>
+
+      {/* ── Forgot Password Modal ── */}
+      <Modal visible={forgotStep > 0} animationType="slide" presentationStyle="pageSheet" onRequestClose={() => setForgotStep(0)}>
+        <SafeAreaView style={{ flex: 1, backgroundColor: C.bg }}>
+          <View style={styles.modalNav}>
+            <TouchableOpacity onPress={() => setForgotStep(0)} style={styles.modalCloseBtn}>
+              <Text style={{ color: C.textSub, fontSize: 16, fontWeight: '700' }}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.modalTitle}>{forgotStep === 1 ? 'Forgot Password' : 'Enter OTP'}</Text>
+            <View style={{ width: 36 }} />
+          </View>
+
+          <ScrollView contentContainerStyle={{ padding: 24, paddingBottom: 60 }}>
+            {/* Step 1 — Enter email */}
+            {forgotStep === 1 && (
+              <>
+                <LinearGradient colors={GRAD_HERO} style={{ borderRadius: 20, padding: 24, alignItems: 'center', marginBottom: 28 }}>
+                  <Text style={{ fontSize: 40, marginBottom: 8 }}>🔒</Text>
+                  <Text style={{ color: '#FFF', fontSize: 18, fontWeight: '800' }}>Reset Password</Text>
+                  <Text style={{ color: 'rgba(255,255,255,0.8)', fontSize: 13, textAlign: 'center', marginTop: 6 }}>We'll send a 6-digit OTP to your registered email address.</Text>
+                </LinearGradient>
+                <Text style={styles.fieldLabel}>Registered Email</Text>
+                <LightInput placeholder="your@email.com" value={forgotEmail} onChangeText={setForgotEmail} keyboardType="email-address" autoCapitalize="none" />
+                <PurpleButton label="Send OTP 📧" onPress={handleForgotPassword} disabled={isForgotLoading} style={{ marginTop: 16 }} />
+              </>
+            )}
+
+            {/* Step 2 — Enter OTP + new password */}
+            {forgotStep === 2 && (
+              <>
+                <View style={{ backgroundColor: '#F0FDF4', borderRadius: 16, padding: 16, marginBottom: 24, borderWidth: 1, borderColor: '#BBF7D0', flexDirection: 'row', alignItems: 'center', gap: 12 }}>
+                  <Text style={{ fontSize: 24 }}>📧</Text>
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ fontWeight: '800', color: '#166534', fontSize: 14 }}>OTP Sent!</Text>
+                    <Text style={{ color: '#15803D', fontSize: 12, marginTop: 2 }}>Check {forgotEmail} for your 6-digit code.</Text>
+                  </View>
+                </View>
+                <Text style={styles.fieldLabel}>Enter OTP</Text>
+                <LightInput placeholder="6-digit code" value={forgotOtp} onChangeText={setForgotOtp} keyboardType="number-pad" maxLength={6} />
+                <Text style={styles.fieldLabel}>New Password</Text>
+                <LightInput placeholder="At least 6 characters" value={forgotNewPw} onChangeText={setForgotNewPw} secureTextEntry />
+                <Text style={styles.fieldLabel}>Confirm New Password</Text>
+                <LightInput placeholder="Repeat new password" value={forgotConfirmPw} onChangeText={setForgotConfirmPw} secureTextEntry />
+                <PurpleButton label="Reset Password ✓" onPress={handleResetPassword} disabled={isForgotLoading} style={{ marginTop: 16 }} />
+                <TouchableOpacity onPress={() => setForgotStep(1)} style={{ alignSelf: 'center', marginTop: 16, padding: 4 }}>
+                  <Text style={{ color: C.textSub, fontSize: 13 }}>Didn't receive it? <Text style={{ color: C.purple, fontWeight: '700' }}>Resend OTP</Text></Text>
+                </TouchableOpacity>
+              </>
+            )}
+          </ScrollView>
+        </SafeAreaView>
+      </Modal>
+
     </View>
   );
 }

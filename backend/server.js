@@ -6,11 +6,24 @@ const multer = require('multer'); // NEW: Handles physical file uploads
 const path = require('path');
 const fs = require('fs');
 const jwt = require('jsonwebtoken');
+const nodemailer = require('nodemailer');
 const JWT_SECRET = process.env.JWT_SECRET || 'supersecretkey123';
 
 const { Server } = require("socket.io");
 const http = require("http");
 const fetch = require('node-fetch');
+
+// ─── Gmail SMTP Transporter ───────────────────────────────────────────
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: process.env.GMAIL_USER,
+    pass: process.env.GMAIL_APP_PASSWORD,
+  },
+});
+
+// ─── In-Memory OTP Store { email -> { otp, expiresAt } } ─────────────
+const otpStore = new Map();
 
 // ─── Expo Push Notification Helper ────────────────────────────────────
 async function sendPushNotification(tokens, title, body) {
@@ -110,7 +123,66 @@ app.post('/api/users/:id/push-token', verifyToken, (req, res) => {
 
 // ─── ORGANIZER PROFILE ENDPOINTS ──────────────────────────────────────
 
-// GET organizer profile + stats
+// ─── FORGOT PASSWORD ──────────────────────────────────────────────────
+
+// Step 1: Send OTP to email
+app.post('/api/forgot-password', (req, res) => {
+  const { email } = req.body;
+  if (!email) return res.json({ success: false, message: 'Email is required.' });
+
+  db.query('SELECT id, name FROM users WHERE email = ?', [email], async (err, results) => {
+    if (err) return res.status(500).json({ success: false, message: 'Database error.' });
+    if (results.length === 0) return res.json({ success: false, message: 'No account found with this email.' });
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString(); // 6-digit OTP
+    const expiresAt = Date.now() + 10 * 60 * 1000; // 10 minutes
+    otpStore.set(email, { otp, expiresAt });
+
+    try {
+      await transporter.sendMail({
+        from: `"ClubCascade 🎪" <${process.env.GMAIL_USER}>`,
+        to: email,
+        subject: 'Your ClubCascade Password Reset OTP',
+        html: `
+          <div style="font-family:sans-serif;max-width:480px;margin:auto;padding:24px;background:#F5F3FF;border-radius:16px">
+            <h2 style="color:#7C3AED;margin-bottom:8px">🔒 Password Reset</h2>
+            <p style="color:#374151">Hi ${results[0].name},</p>
+            <p style="color:#374151">Use the OTP below to reset your ClubCascade password. It expires in <b>10 minutes</b>.</p>
+            <div style="background:#7C3AED;border-radius:12px;padding:20px;text-align:center;margin:20px 0">
+              <span style="font-size:36px;font-weight:900;color:#FFF;letter-spacing:8px">${otp}</span>
+            </div>
+            <p style="color:#9CA3AF;font-size:12px">If you did not request this, please ignore this email.</p>
+          </div>
+        `,
+      });
+      res.json({ success: true, message: 'OTP sent to your email!' });
+    } catch (e) {
+      console.error('Email error:', e.message);
+      res.status(500).json({ success: false, message: 'Failed to send email. Check Gmail credentials.' });
+    }
+  });
+});
+
+// Step 2: Verify OTP + set new password
+app.post('/api/reset-password', (req, res) => {
+  const { email, otp, new_password } = req.body;
+  if (!email || !otp || !new_password) return res.json({ success: false, message: 'All fields required.' });
+
+  const record = otpStore.get(email);
+  if (!record) return res.json({ success: false, message: 'No OTP found. Please request a new one.' });
+  if (Date.now() > record.expiresAt) {
+    otpStore.delete(email);
+    return res.json({ success: false, message: 'OTP has expired. Please request a new one.' });
+  }
+  if (record.otp !== otp.trim()) return res.json({ success: false, message: 'Incorrect OTP. Please try again.' });
+
+  db.query('UPDATE users SET password = ? WHERE email = ?', [new_password, email], (err) => {
+    if (err) return res.status(500).json({ success: false, message: 'Could not update password.' });
+    otpStore.delete(email); // Clear OTP after use
+    res.json({ success: true, message: 'Password reset successfully! You can now log in.' });
+  });
+});
+
 app.get('/api/organizer/:id/profile-stats', verifyToken, (req, res) => {
   const orgId = req.params.id;
   const statsQuery = `
