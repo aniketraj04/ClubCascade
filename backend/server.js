@@ -123,7 +123,7 @@ app.get('/api/organizer/:id/profile-stats', verifyToken, (req, res) => {
       ROUND(AVG(ef.rating), 1)          AS avg_rating
     FROM users u
     LEFT JOIN club_profiles cp ON cp.organizer_id = u.id
-    LEFT JOIN events e         ON e.club_id = u.id
+    LEFT JOIN events e         ON e.organizer_id = u.id
     LEFT JOIN registrations r  ON r.event_id = e.event_id
     LEFT JOIN event_feedback ef ON ef.event_id = e.event_id
     WHERE u.id = ?
@@ -241,7 +241,7 @@ app.get('/api/events', verifyToken, (req, res) => {
     FROM events e
     LEFT JOIN registrations r ON e.event_id = r.event_id
     GROUP BY e.event_id
-    ORDER BY e.date ASC
+    ORDER BY e.event_id DESC
   `;
   db.query(sqlQuery, (err, results) => {
     if (err) return res.status(500).json({ error: 'Database error' });
@@ -351,7 +351,9 @@ app.post('/api/events', verifyOrganizer, upload.single('poster'), (req, res) => 
     }
 
     const sqlQuery = 'INSERT INTO events (title, description, date, venue, club_id, limit_participants, image_url, category, organizer_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)';
-    const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', organizer_id || null];
+    // Always use the JWT-verified user id as organizer_id so stats work correctly
+    const resolvedOrganizerId = req.user.id || organizer_id || null;
+    const values = [title, description, date, venue, club_id || null, limit_participants || 0, finalImageUrl, category || 'General', resolvedOrganizerId];
 
     db.query(sqlQuery, values, (err, result) => {
       if (err) return res.status(500).json({ success: false, message: 'Database refused to save: ' + err.message });
