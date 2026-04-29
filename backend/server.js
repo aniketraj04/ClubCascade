@@ -386,7 +386,7 @@ app.get('/api/organizers/:org_id/events', verifyOrganizer, (req, res) => {
 // ===================================================================
 app.put('/api/events/:event_id', verifyOrganizer, upload.single('poster'), (req, res) => {
   const eventId = req.params.event_id;
-  const { title, description, venue, limit_participants, category, date } = req.body;
+  const { title, description, venue, limit_participants, category, date, duration } = req.body;
 
   // ⚡ CONFLICT CHECK: Allow updating own event, but no overlapping with others
   db.query('SELECT event_id, title FROM events WHERE date = ? AND event_id != ?', [date, eventId], (err, conflicts) => {
