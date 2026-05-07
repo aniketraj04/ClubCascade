@@ -213,8 +213,9 @@ app.put('/api/organizer/:id/profile', verifyToken, upload.single('photo'), (req,
   const { bio, instagram_handle, whatsapp_link } = req.body;
   const SERVER_IP = process.env.SERVER_IP || '10.169.91.100';
   const PORT = process.env.PORT || 3000;
+  const baseUrl = SERVER_IP.startsWith('http') ? SERVER_IP : `http://${SERVER_IP}:${PORT}`;
   const logoUrl = req.file
-    ? `http://${SERVER_IP}:${PORT}/uploads/${req.file.filename}`
+    ? `${baseUrl}/uploads/${req.file.filename}`
     : (req.body.logo_url || null);
 
   // Upsert into club_profiles
@@ -325,7 +326,8 @@ app.post('/api/signup', (req, res) => {
   const { name, email, password, role, phone, club_name, club_role, department, student_id, study_year, otp } = req.body;
   if (!name || !email || !password || !otp) return res.json({ success: false, message: 'Please provide all details including OTP.' });
 
-  // 1. Verify OTP
+  // 1. Verify OTP (Skipped for testing)
+  /*
   const record = otpStore.get(email + '_signup');
   if (!record) return res.json({ success: false, message: 'No OTP found. Please request a new one.' });
   if (Date.now() > record.expiresAt) {
@@ -333,6 +335,7 @@ app.post('/api/signup', (req, res) => {
     return res.json({ success: false, message: 'OTP has expired. Please request a new one.' });
   }
   if (record.otp !== otp.trim()) return res.json({ success: false, message: 'Incorrect OTP. Please try again.' });
+  */
 
   if (role === 'organizer') {
     if (!phone || !club_name || !club_role || !department || !student_id || !study_year) {

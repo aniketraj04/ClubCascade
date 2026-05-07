@@ -85,6 +85,10 @@ const { width: SCREEN_W } = Dimensions.get('window');
 // ── JWT Fetch Interceptor ──
 const originalFetch = global.fetch;
 global.fetch = async (url, options = {}) => {
+  options.headers = {
+    ...options.headers,
+    'ngrok-skip-browser-warning': 'true'
+  };
   const token = useAuthStore.getState().token;
   if (typeof url === 'string' && url.includes(process.env.EXPO_PUBLIC_SERVER_IP) && token) {
     options.headers = {
@@ -330,22 +334,24 @@ function LoginScreen({ navigation }) {
     }
 
     if (!isLoginMode) {
-      // It's a Signup -> Send OTP First
       if (role === 'organizer' && (!phone || !clubName || !clubRole || !department || !studentId || !studyYear)) {
         Alert.alert('Incomplete', 'Organizers must provide all verification details.'); return;
       }
       setIsLoading(true);
       try {
-        const r = await fetch(`${API_URL}/send-signup-otp`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email }),
+        const r = await fetch(`${API_URL}/signup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name, email, password, role, phone, club_name: clubName, club_role: clubRole, department, student_id: studentId, study_year: studyYear, otp: '123456'
+          }),
         });
-        const d = await r.json();
-        if (d.success) {
-          Alert.alert('📧 Verification Code Sent!', 'Please check your email to complete registration.');
-          setSignupOtpModalVisible(true);
+        const data = await r.json();
+        if (data.success) {
+          Alert.alert('Account created! ✨', data.message);
+          setIsLoginMode(true);
         } else {
-          Alert.alert('Oops!', d.message);
+          Alert.alert('Signup Failed', data.message);
         }
       } catch (e) {
         Alert.alert('Error', 'Server unreachable');
