@@ -10,7 +10,11 @@
       "distribution": "internal"
     },
     "preview": {
-      "distribution": "internal"
+      "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://c68c-2a01-4f9-3081-3fda-00-2.ngrok-free.app/api",
+        "EXPO_PUBLIC_SERVER_IP": "https://c68c-2a01-4f9-3081-3fda-00-2.ngrok-free.app"
+      }
     },
     "production": {
       "autoIncrement": true
